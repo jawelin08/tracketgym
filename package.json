@@ -1,4 +1,14 @@
 {
+  "name": "opengym",
+  "private": true,
+  "type": "module",
+  "packageManager": "npm@10.9.2",
+  "scripts": {
+    "start": "npm --prefix api start",
+    "dev": "npm --prefix api start",
+    "install:api": "npm --prefix api install --omit=dev --omit=optional",
+    "postinstall": "npm run install:api"
+  },
   "devDependencies": {
     "js-yaml": "^4.1.0"
   }
