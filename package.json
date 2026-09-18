@@ -4,9 +4,9 @@
   "type": "module",
   "packageManager": "npm@10.9.2",
   "scripts": {
-    "start": "mkdir -p data && DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start",
-    "dev": "mkdir -p data && (DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start & npm --prefix frontend run dev -- --host 0.0.0.0)",
-    "dev:api": "mkdir -p data && DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start",
+    "start": "node server.js",
+    "dev": "PORT=3000 API_PORT=3001 DATA_DIR=./data ORIGIN=http://localhost:3000 RP_ID=localhost node server.js",
+    "dev:api": "mkdir -p data && DATA_DIR=./data PORT=${PORT:-3001} ORIGIN=${ORIGIN:-http://localhost:3000} RP_ID=${RP_ID:-localhost} node api/server.js",
     "dev:web": "npm --prefix frontend run dev -- --host 0.0.0.0",
     "test": "npm --prefix frontend test",
     "install:api": "npm --prefix api install --omit=dev --omit=optional",
