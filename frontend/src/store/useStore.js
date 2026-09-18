@@ -585,20 +585,23 @@ export const useStore = create((set, get) => {
         finishBoot()
         return
       }
-      // Personal tracking mode: always keep one single local profile and never mix state between
-      // different users. This is the default for this instance and avoids the shared-account flows.
-      if (!get().user && !get().isGuest()) {
-        get().setUser({ id: 'mi-tracking', name: 'Mi tracking' })
-      }
-      // Personal tracking mode: this app is for one user only, so on boot we keep a single local
-      // profile and never hydrate a different server-side account into this device.
+      // Default local profile for this device only. If a real user/session is already present,
+      // keep it and let the normal sync flow proceed instead of overwriting it.
       const personal = { id: 'mi-tracking', name: 'Mi tracking' }
-      if (!get().user || get().user.id !== personal.id) {
+      if (!get().user && !get().isGuest()) {
         get().setUser(personal)
       }
       const tz = localTZ()
       if (get().S.reminder?.on && get().S.reminder.tz !== tz) {
         get().update(s => { s.reminder = { ...s.reminder, tz } })
+      }
+      // Signed-in remote profiles continue through the normal sync flow. The local personal
+      // profile is intentionally device-only and must never try to hydrate a shared account.
+      if (get().user && get().user.id !== personal.id && !get().isGuest()) {
+        try {
+          await get().loadConfig()
+          await get().pullState()
+        } catch (_e) { /* offline or unauthenticated: keep the local copy and continue booting */ }
       }
       finishBoot()
     }
