@@ -21,7 +21,7 @@ const SYNC_KEY = 'gym_sync'
 const CHECK_MIN_MS = 3000    // rev checks closer together than this are the same event (focus + visibility)
 const POLL_MS = 30000        // while the app is open and signed in, ask the server for its revision this often
 export const DEF = {
-  unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, timerFlash: false, keepAwake: true, lang: 'en',
+  unit: 'kg', restSec: 90, restPauseSec: 15, sound: true, soundOnSilent: false, timerFlash: false, keepAwake: true, lang: 'es',
   theme: 'dark', accent: 'lime', body: 'male', targetW: null,
   bodyweight: [], routines: [], week: {}, dayPlan: {},
   exWeights: {}, workouts: [], active: null, customEx: [], gifSize: 'full',
@@ -585,27 +585,20 @@ export const useStore = create((set, get) => {
         finishBoot()
         return
       }
-      // Guests never authenticate, so an instance that turned guest mode off has no request to
-      // refuse — the only way the switch reaches someone already inside is here, on their next
-      // boot. Ending the session needs a positive `allow_guest: false`; see lib/guest.js for why
-      // an unreachable server must not be allowed to lock anyone out (#42).
-      const cfg = await get().loadConfig()
-      if (!guestAllowed(cfg)) get().setGuest(false)
-      try {
-        const me = await api('/api/me')
-        get().setUser(me.user)
-        await get().pullState()
-        // Re-stamp the reminder's timezone on every load — keeps it correct if you're travelling,
-        // without needing to revisit Settings.
-        const tz = localTZ()
-        if (get().S.reminder?.on && get().S.reminder.tz !== tz) {
-          get().update(s => { s.reminder = { ...s.reminder, tz } })
-        }
-      } catch (e) {
-        if (e.status === 401) get().setUser(null)
-        // Started without a network (a home-screen app reopened in the gym's basement): keep the
-        // signed-in copy and say so from the first screen, not only after the first failed push.
-        else if (isNetworkError(e) && get().user) setSync({ offline: true })
+      // Personal tracking mode: always keep one single local profile and never mix state between
+      // different users. This is the default for this instance and avoids the shared-account flows.
+      if (!get().user && !get().isGuest()) {
+        get().setUser({ id: 'mi-tracking', name: 'Mi tracking' })
+      }
+      // Personal tracking mode: this app is for one user only, so on boot we keep a single local
+      // profile and never hydrate a different server-side account into this device.
+      const personal = { id: 'mi-tracking', name: 'Mi tracking' }
+      if (!get().user || get().user.id !== personal.id) {
+        get().setUser(personal)
+      }
+      const tz = localTZ()
+      if (get().S.reminder?.on && get().S.reminder.tz !== tz) {
+        get().update(s => { s.reminder = { ...s.reminder, tz } })
       }
       finishBoot()
     }

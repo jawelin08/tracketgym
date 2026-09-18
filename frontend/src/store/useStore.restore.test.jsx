@@ -111,6 +111,10 @@ describe('saved workout state sync and restore', () => {
     expect(useStore.getState().S.routines.map(r => r.id)).toEqual(['local'])
   })
 
+  it('defaults to Spanish personal tracking mode', () => {
+    expect(useStore.getState().S.lang).toBe('es')
+  })
+
   it('restores a remote state over defaults when the local profile is empty', async () => {
     const remote = { _ts: 30, routines: [routine('remote')], workouts: [] }
     api.mockResolvedValue({ state: remote })
@@ -119,7 +123,7 @@ describe('saved workout state sync and restore', () => {
 
     expect(useStore.getState().S.routines.map(r => r.id)).toEqual(['remote'])
     expect(useStore.getState().S.restSec).toBe(90)
-    expect(useStore.getState().S.lang).toBe('en')
+    expect(useStore.getState().S.lang).toBe('es')
   })
 
   it('keeps the local saved state when the restore request fails', async () => {

@@ -208,18 +208,12 @@ export default function Settings() {
         <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
       </> : user ? <>
-        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Signed in with passkey — data syncs to this profile.')} />
-        {user.admin && <Row icon="wrench" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
-        <Row icon="link" iconTint="var(--blue)" title={t('Pair the mobile app')} subtitle={t('Connect the openGym app on your phone to this account.')} accessory="chevron"
-          onClick={() => useUI.getState().openSheet(close => <PairSheet close={close} />)} />
-        <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger onClick={() => confirmSheet({ title: t('Sign out?'), message: t('Your data is synced to your profile first, then cleared from this device.'), confirmText: t('Sign out'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
-        <Row icon="shield" iconTint="var(--red)" title={t('Sign out everywhere')} subtitle={t('Ends this profile’s sessions on all your devices.')} danger onClick={signOutEverywhere} />
-      </> : webauthnOK() ? <>
-        <Row icon="sparkles" iconTint="var(--acc)" title={t('Create passkey profile')} subtitle={t('Keeps your data safe and separate per person.')} accessory="chevron" onClick={registerHere} />
-        <Row icon="person" iconTint="var(--blue)" title={t('Sign in with passkey')} accessory="chevron" onClick={signInHere} />
-      </> : (
-        <Row icon="lock" iconTint="var(--grey)" title={t('Passkeys not supported in this browser.')} />
-      )}
+        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Mi tracking personal — todo queda en este dispositivo.')} />
+        <Row icon="signOut" iconTint="var(--red)" title={t('Cerrar sesión')} danger onClick={() => confirmSheet({ title: t('Cerrar sesión?'), message: t('Se borra el tracking personal de este dispositivo.'), confirmText: t('Cerrar sesión'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
+      </> : <>
+        <Row icon="personCircle" iconTint="var(--grey)" title={t('Mi tracking')} subtitle={t('Todo queda aquí y no se mezcla con otros usuarios.')} />
+        <Row icon="sparkles" iconTint="var(--acc)" title={t('Entrar a Mi tracking')} onClick={() => { const u = { id: 'mi-tracking', name: 'Mi tracking' }; useStore.getState().setUser(u); useStore.getState().adoptProfile(() => false); toast(t('Bienvenido a tu tracking personal')); }} />
+      </>}
     </Section>
     {!user && !DEMO && !MOBILE && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode — data lives only in this browser.')}</p>}
 
