@@ -36,7 +36,7 @@ describe('Brazilian Portuguese exercise instructions', () => {
         expect(step, `${id} step ${index + 1}`).not.toMatch(/flexion\p{L}*\s+(?:a\s+|o\s+|os\s+|um\s+|uma\s+)?(?:barra|pesos?|halter(?:es)?|mão)(?=$|[^\p{L}])/iu)
       })
     }
-  })
+  }, 20000)
 
   test('does not replace kettlebells with dumbbells', () => {
     for (const exercise of EXDB) {

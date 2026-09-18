@@ -4,8 +4,11 @@
   "type": "module",
   "packageManager": "npm@10.9.2",
   "scripts": {
-    "start": "npm --prefix api start",
-    "dev": "npm --prefix api start",
+    "start": "mkdir -p data && DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start",
+    "dev": "mkdir -p data && (DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start & npm --prefix frontend run dev -- --host 0.0.0.0)",
+    "dev:api": "mkdir -p data && DATA_DIR=./data PORT=${PORT:-3000} ORIGIN=${ORIGIN:-http://localhost:8080} RP_ID=${RP_ID:-localhost} npm --prefix api start",
+    "dev:web": "npm --prefix frontend run dev -- --host 0.0.0.0",
+    "test": "npm --prefix frontend test",
     "install:api": "npm --prefix api install --omit=dev --omit=optional",
     "postinstall": "npm run install:api"
   },
