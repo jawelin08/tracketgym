@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { useStore, hasData } from '../store/useStore.js'
+import { useStore } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
 import { passwordLogin, passwordRegister } from '../lib/api.js'
@@ -9,7 +9,7 @@ import Icon from '../components/Icon.jsx'
 import { Button, TextField } from '../components/ui.jsx'
 
 export default function Login() {
-  const { setUser, adoptProfile, pushState, pullState, setGuest, loadConfig } = useStore()
+  const { setUser, adoptProfile, setGuest, loadConfig } = useStore()
   const toast = useUI(s => s.toast)
   const [mode, setMode] = useState('login')
   const [busy, setBusy] = useState(false)
@@ -57,11 +57,10 @@ export default function Login() {
     try {
       const u = await passwordRegister({ email: e, username: uName, password, code: code.trim() })
       setUser(u)
-      if (hasData(useStore.getState().S)) {
-        await pushState()
+      const adopted = await adoptProfile(askAddDeviceData)
+      if (adopted?.added) {
         toast(t('Cuenta creada: tus datos se han movido al perfil'))
       } else {
-        await pullState()
         toast(t('Bienvenido, {0}', u.name))
       }
     } catch (e) {

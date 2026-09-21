@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, forwardRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { useStore, DEF, hasData } from '../store/useStore.js'
+import { useStore, DEF } from '../store/useStore.js'
 import { workoutControls } from '../lib/workout-controls.js'
 import { convertStateUnit } from '../lib/units.js'
 import { useUI } from '../store/useUI.js'
@@ -25,7 +25,7 @@ export default function Settings() {
   const S = useStore(s => s.S)
   const user = useStore(s => s.user)
   const coachLocal = useStore(s => s.coachLocal)
-  const { update, replaceState, setUser, pullState, pushState, adoptProfile, signOut, signOutAll, resetDemo, disconnectServer } = useStore()
+  const { update, replaceState, setUser, adoptProfile, signOut, signOutAll, resetDemo, disconnectServer } = useStore()
   const toast = useUI(s => s.toast)
   const fileRef = useRef(null)
   const importRef = useRef(null)
@@ -144,7 +144,7 @@ export default function Settings() {
     rd.readAsText(f)
   }
   const signInHere = () => useUI.getState().openSheet(close => <AccountInline close={close} mode="login" setUser={setUser} adoptProfile={adoptProfile} toast={toast} />)
-  const registerHere = () => useUI.getState().openSheet(close => <AccountInline close={close} mode="register" setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
+  const registerHere = () => useUI.getState().openSheet(close => <AccountInline close={close} mode="register" setUser={setUser} adoptProfile={adoptProfile} toast={toast} />)
   // Ends the profile's sessions on every device — this one included, so on success it lands in
   // the same place as the plain sign-out above (home, local data cleared). On failure nothing
   // local is touched: still signed in here, and say so rather than leaving a half-signed-out app.
@@ -668,7 +668,7 @@ function PairSheet({ close }) {
 }
 
 // Account login/register from Settings, mirroring the main login screen flow.
-function AccountInline({ close, mode, setUser, adoptProfile, pushState, pullState, toast }) {
+function AccountInline({ close, mode, setUser, adoptProfile, toast }) {
   const [email, setEmail] = useState('')
   const [username, setUsername] = useState('')
   const [identifier, setIdentifier] = useState('')
@@ -701,9 +701,10 @@ function AccountInline({ close, mode, setUser, adoptProfile, pushState, pullStat
     try {
       const u = await passwordRegister({ email: e, username: uName, password, code: code.trim() })
       setUser(u)
+      const adopted = await adoptProfile(askAddDeviceData)
       close()
-      if (hasData(useStore.getState().S)) { await pushState(); toast(t('Profile created — data moved into it')) }
-      else { await pullState(); toast(t('Welcome, {0}', u.name)) }
+      if (adopted?.added) toast(t('Profile created — data moved into it'))
+      else toast(t('Welcome, {0}', u.name))
     } catch (e) { toast(e.message || t('Registration failed')) }
   }
 

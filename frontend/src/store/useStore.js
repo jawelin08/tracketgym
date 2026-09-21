@@ -124,6 +124,10 @@ export const useStore = create((set, get) => {
     const next = { ...cur, ...patch }
     if (next.offline !== cur.offline || next.pending !== cur.pending || next.lastSynced !== cur.lastSynced) set({ sync: next })
   }
+  const clearDirty = () => {
+    localStorage.removeItem('gym_dirty')
+    setSync({ pending: false })
+  }
   const isNetworkError = e => e && e.status == null   // fetch itself failed: no response at all
 
   initReminderSync(() => get().S)
@@ -417,8 +421,12 @@ export const useStore = create((set, get) => {
           if (rev == null) {
             localStorage.removeItem(SYNC_KEY)
             const restored = restoredStateFor(S, state, dirty)
-            if (restored) persist(restored, false, false)
+            if (restored) {
+              persist(restored, false, false)
+              if (!dirty) clearDirty()
+            }
             else if (hasData(S)) await get().pushState()
+            else if (!dirty) clearDirty()
             return
           }
           // No marker yet — first pull on this device, or a client that just learned about
@@ -427,16 +435,32 @@ export const useStore = create((set, get) => {
           if (!sync) {
             if (dirty && state) { mergeInto(S, state, rev); pushPending = false; await get().pushState(); return }
             const restored = restoredStateFor(S, state, false)
-            if (restored) adopt(restored, rev)
+            if (restored) {
+              adopt(restored, rev)
+              clearDirty()
+            }
             else if (hasData(S)) { writeSync(rev, 0); await get().pushState() }
-            else writeSync(rev, state?._ts || 0)
+            else { writeSync(rev, state?._ts || 0); clearDirty() }
             return
           }
           const serverMoved = rev !== sync.rev
           const localChanged = dirty || (S._ts || 0) > (sync.ts || 0)
-          if (!serverMoved) { if (localChanged) await get().pushState(); return }
-          if (!state) { writeSync(rev, 0); if (hasData(S)) await get().pushState(); return }
-          if (!localChanged) { adopt(Object.assign(clone(DEF), state, { active: S.active || null }), rev); return }
+          if (!serverMoved) {
+            if (localChanged) await get().pushState()
+            else clearDirty()
+            return
+          }
+          if (!state) {
+            writeSync(rev, 0)
+            if (hasData(S)) await get().pushState()
+            else clearDirty()
+            return
+          }
+          if (!localChanged) {
+            adopt(Object.assign(clone(DEF), state, { active: S.active || null }), rev)
+            clearDirty()
+            return
+          }
           mergeInto(S, state, rev)
           pushPending = false
           await get().pushState()
@@ -462,6 +486,7 @@ export const useStore = create((set, get) => {
         localStorage.removeItem('gym_dirty')
         if (hasData(S)) { if (rev != null) writeSync(rev, 0); forceNext = true; await get().pushState() }
         else if (rev != null) writeSync(rev, 0)
+        setSync({ pending: false })
         return { adopted: false, added: false }
       }
       const extras = localExtras(S, state)
