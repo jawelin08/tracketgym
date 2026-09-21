@@ -226,6 +226,141 @@ function AuditCard({ tick }) {
   </div>
 }
 
+function GymEditSheet({ gym, users, onSaved, close }) {
+  const toast = useUI(s => s.toast)
+  const [name, setName] = useState(gym.name || '')
+  const [status, setStatus] = useState(gym.status || 'active')
+  const [plan, setPlan] = useState(gym.plan || 'starter')
+  const [seats, setSeats] = useState(String(gym.seats || 500))
+  const [note, setNote] = useState(gym.note || '')
+  const [ownerId, setOwnerId] = useState(gym.ownerId || '')
+  const [busy, setBusy] = useState(false)
+
+  const save = async () => {
+    setBusy(true)
+    try {
+      await api('/api/admin/platform/gyms/update', {
+        method: 'POST',
+        body: JSON.stringify({ id: gym.id, name, status, plan, seats: Number(seats || 500), note })
+      })
+      if (ownerId && ownerId !== gym.ownerId) {
+        await api('/api/admin/platform/gyms/assign-owner', {
+          method: 'POST',
+          body: JSON.stringify({ gymId: gym.id, userId: ownerId })
+        })
+      }
+      toast('Gym updated')
+      onSaved()
+      close()
+    } catch (e) {
+      toast(e.message || 'Could not update gym')
+    }
+    setBusy(false)
+  }
+
+  return <>
+    <h3>{gym.name}</h3>
+    <div className="adm-field"><label>Gym name</label><TextField value={name} onChange={e => setName(e.target.value)} maxLength={80} /></div>
+    <div className="adm-field"><label>Status</label>
+      <div className="chips">
+        {['trial', 'active', 'paused', 'suspended'].map(s => <button key={s} className={'chip' + (status === s ? ' on' : '')} onClick={() => setStatus(s)}>{s}</button>)}
+      </div>
+    </div>
+    <div className="adm-field"><label>Plan</label>
+      <div className="chips">
+        {['starter', 'pro', 'enterprise'].map(s => <button key={s} className={'chip' + (plan === s ? ' on' : '')} onClick={() => setPlan(s)}>{s}</button>)}
+      </div>
+    </div>
+    <div className="adm-field"><label>Seats</label><TextField value={seats} onChange={e => setSeats(e.target.value.replace(/[^0-9]/g, ''))} maxLength={6} /></div>
+    <div className="adm-field"><label>Owner</label>
+      <select className="adm-select" value={ownerId} onChange={e => setOwnerId(e.target.value)}>
+        <option value="">No owner yet</option>
+        {users.map(u => <option key={u.id} value={u.id}>{u.name}{u.email ? ' · ' + u.email : ''}</option>)}
+      </select>
+    </div>
+    <div className="adm-field"><label>Internal note</label>
+      <textarea className="field" rows="3" value={note} onChange={e => setNote(e.target.value)} maxLength={240} />
+    </div>
+    <Button variant="primary" onClick={save} disabled={busy}>{busy ? 'Saving…' : 'Save gym'}</Button>
+  </>
+}
+
+function PlatformCard({ refreshTick }) {
+  const toast = useUI(s => s.toast)
+  const openSheet = useUI(s => s.openSheet)
+  const [gyms, setGyms] = useState(null)
+  const [platformUsers, setPlatformUsers] = useState([])
+  const [newGymName, setNewGymName] = useState('')
+  const [creating, setCreating] = useState(false)
+
+  const load = () => Promise.all([
+    api('/api/admin/platform/gyms'),
+    api('/api/admin/platform/users')
+  ]).then(([g, u]) => {
+    setGyms(g.gyms || [])
+    setPlatformUsers(u.users || [])
+  }).catch(e => toast(e.message || 'Could not load platform control'))
+
+  useEffect(() => { load() }, [refreshTick])
+
+  const createGym = async () => {
+    const name = newGymName.trim()
+    if (!name) return
+    setCreating(true)
+    try {
+      await api('/api/admin/platform/gyms/create', {
+        method: 'POST',
+        body: JSON.stringify({ name, status: 'trial', plan: 'starter', seats: 100 })
+      })
+      setNewGymName('')
+      await load()
+      toast('Gym created')
+    } catch (e) {
+      toast(e.message || 'Could not create gym')
+    }
+    setCreating(false)
+  }
+
+  const openGym = gym => openSheet(close => <GymEditSheet gym={gym} users={platformUsers} onSaved={load} close={close} />)
+
+  const activeGyms = (gyms || []).filter(g => g.status === 'active').length
+  const trialGyms = (gyms || []).filter(g => g.status === 'trial').length
+  const totalMembers = (gyms || []).reduce((n, g) => n + (g.members || 0), 0)
+
+  return <>
+    <div className="tiles" style={{ marginBottom: 12 }}>
+      <div className="tile"><div className="l">Gyms</div><div className="v">{gyms ? gyms.length : '—'}</div></div>
+      <div className="tile"><div className="l">Active gyms</div><div className="v">{gyms ? activeGyms : '—'}</div></div>
+      <div className="tile"><div className="l">Trial gyms</div><div className="v">{gyms ? trialGyms : '—'}</div></div>
+      <div className="tile"><div className="l">Members total</div><div className="v">{gyms ? totalMembers : '—'}</div></div>
+    </div>
+
+    <div className="card">
+      <h2 style={{ margin: 0 }}>Create gym</h2>
+      <div className="adm-lead">Create a new gym tenant, then open it to set owner, plan and operational status.</div>
+      <div className="row" style={{ gap: 8 }}>
+        <div className="grow"><TextField value={newGymName} onChange={e => setNewGymName(e.target.value)} placeholder="Gym name" maxLength={80} /></div>
+        <Button variant="primary" icon="plus" onClick={createGym} disabled={creating || !newGymName.trim()}>{creating ? 'Creating…' : 'Create'}</Button>
+      </div>
+    </div>
+
+    <div className="card">
+      <h2 style={{ margin: 0 }}>Gym tenants</h2>
+      <div className="adm-lead">Commercial control for each customer gym: plan, seats, owner and status.</div>
+      <div className="list">
+        {(gyms || []).map(g => <div key={g.id} className="item" onClick={() => openGym(g)}>
+          <div className="grow">
+            <div className="tt">{g.name} <span className={'adm-pill ' + (g.status === 'active' ? 'ok' : g.status === 'trial' ? 'warn' : 'bad')} style={{ marginLeft: 6 }}>{g.status}</span> <span className="adm-pill" style={{ marginLeft: 6 }}>{g.plan}</span></div>
+            <div className="ss">{g.members} members · {g.activeMembers} active · {g.seats} seats · owner {g.ownerName || 'not assigned'} · last sync {rel(g.lastSync)}</div>
+          </div>
+          <Icon name="chevronRight" className="chev" />
+        </div>)}
+        {gyms && !gyms.length && <div className="adm-empty">No gyms yet.</div>}
+      </div>
+    </div>
+  </>
+}
+
 export default function Admin() {
   const nav = useNavigate()
   const user = useStore(s => s.user)
@@ -235,6 +370,7 @@ export default function Admin() {
   const [invites, setInvites] = useState(null)
   const [inviteOnly, setInviteOnly] = useState(false)
   const [tick, setTick] = useState(0)          // the ↻ button; the activity log listens to it
+  const [mode, setMode] = useState('gym')
   const [query, setQuery] = useState('')
   const [statusFilter, setStatusFilter] = useState('all')
 
@@ -267,6 +403,13 @@ export default function Admin() {
     <div className="adm-intro">
       Everything about running this instance: who uses it, how they get in, the AI Coach, and what has happened on it. Nothing here shows anyone's training data beyond counts.
     </div>
+
+    {user?.canManagePlatform && <div className="chips" style={{ marginBottom: 12 }}>
+      <button className={'chip' + (mode === 'gym' ? ' on' : '')} onClick={() => setMode('gym')}>Gym control view</button>
+      <button className={'chip' + (mode === 'platform' ? ' on' : '')} onClick={() => setMode('platform')}>My platform control</button>
+    </div>}
+
+    {mode === 'platform' && user?.canManagePlatform ? <PlatformCard refreshTick={tick} /> : <>
 
     <div className="tiles" style={{ marginBottom: 12 }}>
       <div className="tile"><div className="l">Users</div><div className="v">{users ? users.length : '—'}</div></div>
@@ -316,5 +459,6 @@ export default function Admin() {
     </div>
 
     <div style={{ marginTop: 14 }}><AuditCard tick={tick} /></div>
+    </>}
   </div>
 }

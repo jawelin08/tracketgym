@@ -28,6 +28,7 @@ const RP_NAME = process.env.RP_NAME || 'openGym';
 // Admin dashboard (issue): admins are matched by uid; INVITE_ONLY gates new signups behind a
 // code the admin generates. Both default off so a fresh self-hosted instance stays open.
 const ADMIN_UIDS = (process.env.ADMIN_UIDS || '').split(',').map(s => s.trim()).filter(Boolean);
+const SUPER_ADMIN_UIDS = (process.env.SUPER_ADMIN_UIDS || '').split(',').map(s => s.trim()).filter(Boolean);
 const INVITE_ONLY = /^(1|true|yes|on)$/i.test(process.env.INVITE_ONLY || '');
 // Guest mode ("Continue without account") keeps everything in the browser and never touches this
 // server — but on an instance meant for a known set of people, an entrance nobody can walk back
@@ -64,11 +65,13 @@ if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(
 const SECRET = fs.readFileSync(secretFile, 'utf8').trim();
 
 const dbFile = path.join(DATA, 'db.json');
-let db = { users: [], creds: [], subs: [], invites: [] };
+let db = { users: [], creds: [], subs: [], invites: [], gyms: [] };
 try { db = JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch {}
 db.subs = db.subs || [];
 db.invites = db.invites || [];
-const isAdmin = user => !!user && (user.admin === true || ADMIN_UIDS.includes(user.id));
+db.gyms = Array.isArray(db.gyms) ? db.gyms : [];
+const isSuperAdmin = user => !!user && (user.superadmin === true || SUPER_ADMIN_UIDS.includes(user.id));
+const isAdmin = user => !!user && (isSuperAdmin(user) || user.admin === true || ADMIN_UIDS.includes(user.id));
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
 // the whole directory; now that the directory stays traversable, the file carries its own mode.
 function saveDb() { atomicWrite(dbFile, JSON.stringify(db, null, 2), 0o600); }
@@ -83,6 +86,45 @@ function normalizeEmail(v) {
 }
 function normalizeUsername(v) {
   return String(v || '').trim().toLowerCase();
+}
+const GYM_STATUSES = new Set(['trial', 'active', 'paused', 'suspended']);
+const GYM_PLANS = new Set(['starter', 'pro', 'enterprise']);
+function gymStatusOf(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return GYM_STATUSES.has(s) ? s : 'active';
+}
+function gymPlanOf(v) {
+  const p = String(v || '').trim().toLowerCase();
+  return GYM_PLANS.has(p) ? p : 'starter';
+}
+function slugOf(v) {
+  return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'gym';
+}
+function gymById(id) {
+  return db.gyms.find(g => g.id === id) || null;
+}
+function defaultGymId() {
+  return db.gyms[0]?.id || null;
+}
+function userGymId(user) {
+  return user?.gymId || defaultGymId();
+}
+function canManageUser(actor, target) {
+  if (!actor || !target) return false;
+  if (isSuperAdmin(actor)) return true;
+  return userGymId(actor) === userGymId(target);
+}
+function publicUser(user) {
+  const gym = gymById(userGymId(user));
+  return {
+    id: user.id,
+    name: user.name,
+    admin: isAdmin(user),
+    superadmin: isSuperAdmin(user),
+    canManagePlatform: isSuperAdmin(user),
+    gymId: gym?.id || null,
+    gymName: gym?.name || null
+  };
 }
 const MEMBER_STATUSES = new Set(['lead', 'active', 'paused', 'former']);
 function memberStatusOf(v) {
@@ -101,6 +143,42 @@ function verifyPassword(password, salt, hash) {
 const stateFile = uid => path.join(DATA, 'state-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
 function readState(uid) {
   try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
+}
+
+// v1 multi-gym bootstrap: existing installs get one default gym and all users attached to it.
+{
+  let changed = false;
+  if (!db.gyms.length) {
+    db.gyms.push({
+      id: 'gym-default',
+      name: 'Main Gym',
+      slug: 'main-gym',
+      status: 'active',
+      plan: 'starter',
+      seats: 500,
+      ownerId: null,
+      note: '',
+      created: new Date().toISOString()
+    });
+    changed = true;
+  }
+  for (const g of db.gyms) {
+    const status = gymStatusOf(g.status);
+    const plan = gymPlanOf(g.plan);
+    const seats = Math.max(1, Math.min(50000, +g.seats || 500));
+    const slug = slugOf(g.slug || g.name || 'gym');
+    if (g.status !== status || g.plan !== plan || g.seats !== seats || g.slug !== slug) changed = true;
+    g.status = status;
+    g.plan = plan;
+    g.seats = seats;
+    g.slug = slug;
+    g.note = String(g.note || '').slice(0, 240);
+  }
+  const def = defaultGymId();
+  for (const u of db.users) {
+    if (!u.gymId || !gymById(u.gymId)) { u.gymId = def; changed = true; }
+  }
+  if (changed) saveDb();
 }
 
 /* ---------- push notifications (Web Push / VAPID) ---------- */
@@ -447,6 +525,12 @@ function requireAdmin(req, res) {
   if (!isAdmin(user)) { audit(req, 'admin.denied', { ok: false, user }); json(res, 403, { error: 'forbidden' }); return null; }
   return user;
 }
+function requireSuperAdmin(req, res) {
+  const user = readSession(req);
+  if (!user) { json(res, 401, { error: 'not signed in' }); return null; }
+  if (!isSuperAdmin(user)) { audit(req, 'platform.denied', { ok: false, user }); json(res, 403, { error: 'forbidden' }); return null; }
+  return user;
+}
 const expireCookie = name => `${name}=; Path=/; Max-Age=0; HttpOnly;${SECURE} SameSite=Lax`;
 function sessionCookie(user) {
   const fresh = `${COOKIE}=${makeSession(user)}; Path=/; Max-Age=${SESSION_DAYS * 86400}; HttpOnly;${SECURE} SameSite=Lax`;
@@ -675,7 +759,7 @@ const routes = {
   'GET /api/me': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } });
+    json(res, 200, { user: publicUser(user) });
   },
 
   'POST /api/auth/register': async (req, res) => {
@@ -720,9 +804,10 @@ const routes = {
     }
 
     db.users.push(user);
+    user.gymId = user.gymId || defaultGymId();
     saveDb();
     audit(req, 'auth.password.register.ok', { user });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/auth/login': async (req, res) => {
@@ -746,7 +831,7 @@ const routes = {
     }
 
     audit(req, 'auth.password.login.ok', { user });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/register/options': async (req, res) => {
@@ -811,6 +896,7 @@ const routes = {
       }
     }
     const user = { id: c.uid, name: c.name, created: new Date().toISOString() };
+    user.gymId = user.gymId || defaultGymId();
     if (invite) { user.invitedBy = invite.code; invite.usedBy = user.id; invite.usedAt = user.created; }
     db.users.push(user);
     db.creds.push({
@@ -821,7 +907,7 @@ const routes = {
     });
     saveDb();
     audit(req, 'auth.register.ok', { user, msg: invite ? invite.code : null });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/login/options': async (req, res) => {
@@ -882,7 +968,7 @@ const routes = {
       return json(res, 403, { error: 'this account has been disabled' });
     }
     audit(req, 'auth.login.ok', { user });
-    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   // Reads the session purely so the sign-out can be recorded; the cookie is cleared either way.
@@ -936,7 +1022,7 @@ const routes = {
       return json(res, 400, { error: 'invalid or expired code' });
     }
     audit(req, 'auth.pair.ok', { user });
-    json(res, 200, { token: makeSession(user), user: { id: user.id, name: user.name, admin: isAdmin(user) } });
+    json(res, 200, { token: makeSession(user), user: publicUser(user) });
   },
 
   // `rev` is the server's own count of writes to this profile (also stored inside the document as
@@ -1081,15 +1167,20 @@ const routes = {
   /* ---------- admin dashboard ---------- */
   // One row per user, cheap enough for a personal instance (reads each state file once).
   'GET /api/admin/users': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
-    const users = db.users.map(u => {
+    const actor = requireAdmin(req, res); if (!actor) return;
+    const all = new URL(req.url, 'http://x').searchParams.get('scope') === 'all';
+    const scopeGymId = isSuperAdmin(actor) && all ? null : userGymId(actor);
+    const users = db.users.filter(u => !scopeGymId || userGymId(u) === scopeGymId).map(u => {
       const S = readState(u.id) || {};
       const workouts = S.workouts || [];
       const last = workouts[workouts.length - 1];
+      const gym = gymById(userGymId(u));
       return {
         id: u.id, name: u.name, created: u.created || null,
         username: u.username || null,
         email: u.email || null,
+        gymId: gym?.id || null,
+        gymName: gym?.name || null,
         memberStatus: memberStatusOf(u.memberStatus),
         assignedCoach: u.assignedCoach || null,
         memberNote: u.memberNote || '',
@@ -1101,22 +1192,26 @@ const routes = {
         live: livePresence(u.id)
       };
     });
-    json(res, 200, { users, invite_only: INVITE_ONLY, now: Date.now() });
+    json(res, 200, { users, invite_only: INVITE_ONLY, now: Date.now(), scopeGymId, actor: publicUser(actor) });
   },
 
   // Drill-down: full workout history + body-weight log for one user.
   'GET /api/admin/user': async (req, res) => {
-    if (!requireAdmin(req, res)) return;
+    const actor = requireAdmin(req, res); if (!actor) return;
     const id = new URL(req.url, 'http://x').searchParams.get('id');
     const u = db.users.find(x => x.id === id);
     if (!u) return json(res, 404, { error: 'no such user' });
+    if (!canManageUser(actor, u)) return json(res, 403, { error: 'forbidden' });
     const S = readState(u.id) || {};
+    const gym = gymById(userGymId(u));
     json(res, 200, {
       user: {
         id: u.id,
         name: u.name,
         username: u.username || null,
         email: u.email || null,
+        gymId: gym?.id || null,
+        gymName: gym?.name || null,
         memberStatus: memberStatusOf(u.memberStatus),
         assignedCoach: u.assignedCoach || null,
         memberNote: u.memberNote || '',
@@ -1139,6 +1234,7 @@ const routes = {
     const id = String(body.id || '');
     const u = db.users.find(x => x.id === id);
     if (!u) return json(res, 404, { error: 'no such user' });
+    if (!canManageUser(admin, u)) return json(res, 403, { error: 'forbidden' });
     const before = {
       memberStatus: memberStatusOf(u.memberStatus),
       assignedCoach: u.assignedCoach || null,
@@ -1168,6 +1264,7 @@ const routes = {
     const body = await readBody(req);
     const u = db.users.find(x => x.id === body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
+    if (!canManageUser(admin, u)) return json(res, 403, { error: 'forbidden' });
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
     u.disabled = !!body.disabled;
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
@@ -1211,6 +1308,111 @@ const routes = {
     saveDb();
     audit(req, 'admin.invite.revoke', { user: admin, msg: inv.code });
     json(res, 200, { ok: true });
+  },
+
+  /* ---------- platform (super-admin) ---------- */
+  'GET /api/admin/platform/gyms': async (req, res) => {
+    const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
+    const gyms = db.gyms.map(g => {
+      const members = db.users.filter(u => userGymId(u) === g.id);
+      const owner = members.find(u => u.id === g.ownerId) || null;
+      const activeMembers = members.filter(u => !u.disabled && memberStatusOf(u.memberStatus) === 'active').length;
+      const lastSync = members.reduce((max, u) => {
+        const ts = readState(u.id)?._ts || 0;
+        return ts > max ? ts : max;
+      }, 0) || null;
+      return {
+        id: g.id,
+        name: g.name,
+        slug: g.slug,
+        status: gymStatusOf(g.status),
+        plan: gymPlanOf(g.plan),
+        seats: Math.max(1, Math.min(50000, +g.seats || 500)),
+        note: String(g.note || ''),
+        ownerId: owner?.id || g.ownerId || null,
+        ownerName: owner?.name || null,
+        members: members.length,
+        activeMembers,
+        lastSync,
+        created: g.created || null
+      };
+    });
+    json(res, 200, { gyms, actor: publicUser(superAdmin), now: Date.now() });
+  },
+
+  'GET /api/admin/platform/users': async (req, res) => {
+    if (!requireSuperAdmin(req, res)) return;
+    const users = db.users.map(u => ({
+      id: u.id,
+      name: u.name,
+      email: u.email || null,
+      username: u.username || null,
+      gymId: userGymId(u),
+      gymName: gymById(userGymId(u))?.name || null,
+      disabled: !!u.disabled,
+      admin: isAdmin(u),
+      superadmin: isSuperAdmin(u)
+    }));
+    json(res, 200, { users });
+  },
+
+  'POST /api/admin/platform/gyms/create': async (req, res) => {
+    const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
+    const body = await readBody(req);
+    const name = String(body.name || '').trim().slice(0, 80);
+    if (!name) return json(res, 400, { error: 'name required' });
+    const id = 'gym-' + crypto.randomBytes(6).toString('hex');
+    let slug = slugOf(body.slug || name);
+    const baseSlug = slug;
+    let n = 2;
+    while (db.gyms.some(g => g.slug === slug)) slug = `${baseSlug}-${n++}`;
+    const gym = {
+      id,
+      name,
+      slug,
+      status: gymStatusOf(body.status),
+      plan: gymPlanOf(body.plan),
+      seats: Math.max(1, Math.min(50000, +body.seats || 500)),
+      ownerId: null,
+      note: String(body.note || '').trim().slice(0, 240),
+      created: new Date().toISOString()
+    };
+    db.gyms.push(gym);
+    saveDb();
+    audit(req, 'platform.gym.create', { user: superAdmin, msg: gym.name });
+    json(res, 200, { ok: true, gym });
+  },
+
+  'POST /api/admin/platform/gyms/update': async (req, res) => {
+    const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
+    const body = await readBody(req);
+    const gym = gymById(String(body.id || ''));
+    if (!gym) return json(res, 404, { error: 'no such gym' });
+    const nextName = String(body.name || gym.name).trim().slice(0, 80);
+    if (!nextName) return json(res, 400, { error: 'name required' });
+    gym.name = nextName;
+    gym.status = gymStatusOf(body.status || gym.status);
+    gym.plan = gymPlanOf(body.plan || gym.plan);
+    gym.seats = Math.max(1, Math.min(50000, +body.seats || gym.seats || 500));
+    gym.note = String(body.note ?? gym.note ?? '').trim().slice(0, 240);
+    saveDb();
+    audit(req, 'platform.gym.update', { user: superAdmin, msg: gym.name });
+    json(res, 200, { ok: true, gym });
+  },
+
+  'POST /api/admin/platform/gyms/assign-owner': async (req, res) => {
+    const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
+    const body = await readBody(req);
+    const gym = gymById(String(body.gymId || ''));
+    if (!gym) return json(res, 404, { error: 'no such gym' });
+    const user = db.users.find(u => u.id === String(body.userId || ''));
+    if (!user) return json(res, 404, { error: 'no such user' });
+    gym.ownerId = user.id;
+    user.gymId = gym.id;
+    user.admin = true;
+    saveDb();
+    audit(req, 'platform.gym.owner', { user: superAdmin, target: user, msg: gym.id });
+    json(res, 200, { ok: true, gym: { id: gym.id, ownerId: gym.ownerId }, user: publicUser(user) });
   },
 
   /* ---------- activity log ---------- */

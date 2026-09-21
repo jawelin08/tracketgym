@@ -1239,6 +1239,8 @@ export default {
   'Spotify connected.': 'Spotify conectado.',
   'Spotify login failed.': 'Error al iniciar sesión en Spotify.',
   'Spotify control failed.': 'Falló el control de Spotify.',
+  'My platform control': 'Mi panel de plataforma',
+  'Super-admin view for managing gyms and owners.': 'Vista super-admin para gestionar gimnasios y propietarios.',
   'Starting download…': 'Iniciando descarga…',
   'Downloading update…': 'Descargando actualización…',
   '{0} %': '{0} %',
