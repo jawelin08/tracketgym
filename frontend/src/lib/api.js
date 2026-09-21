@@ -18,7 +18,7 @@ export function setRemoteAuth(base, token) { remoteBase = base || ''; remoteToke
 export async function api(path, opts) {
   const headers = Object.assign({ 'Content-Type': 'application/json' }, opts && opts.headers)
   if (remoteToken) headers.Authorization = 'Bearer ' + remoteToken
-  const r = await fetch(remoteBase + path, Object.assign({}, opts, { headers }))
+  const r = await fetch(remoteBase + path, Object.assign({}, opts, { headers, credentials: 'include' }))
   const data = await r.json().catch(() => ({}))
   // The body rides along on the error: a 409 from /api/data carries the server's document.
   if (!r.ok) { const e = new Error(data.error || ('HTTP ' + r.status)); e.status = r.status; e.data = data; throw e }
@@ -29,7 +29,7 @@ export async function api(path, opts) {
 // so it talks straight to the server the user typed in, no Authorization header.
 export async function pairRedeem(serverBase, code) {
   const r = await fetch(serverBase + '/api/pair/redeem', {
-    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code })
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }), credentials: 'include'
   })
   const data = await r.json().catch(() => ({}))
   if (!r.ok) { const e = new Error(data.error || ('HTTP ' + r.status)); e.status = r.status; throw e }
