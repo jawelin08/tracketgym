@@ -14,6 +14,8 @@ const apiPort = Number(process.env.API_PORT || 3001);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
 const apiOrigin = process.env.ORIGIN || `http://localhost:${port}`;
 const rpId = process.env.RP_ID || 'localhost';
+const mediaFallbackImgBase = process.env.MEDIA_FALLBACK_IMG_BASE || 'https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/images/';
+const mediaFallbackGifBase = process.env.MEDIA_FALLBACK_GIF_BASE || 'https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/videos/';
 
 function ensureDir(dir) {
   fs.mkdirSync(dir, { recursive: true });
@@ -85,6 +87,8 @@ function getMimeType(filePath) {
     '.jpeg': 'image/jpeg',
     '.gif': 'image/gif',
     '.webp': 'image/webp',
+    '.mp4': 'video/mp4',
+    '.webm': 'video/webm',
     '.ico': 'image/x-icon',
     '.txt': 'text/plain; charset=utf-8',
     '.woff': 'font/woff',
@@ -92,6 +96,16 @@ function getMimeType(filePath) {
     '.ttf': 'font/ttf',
   };
   return map[ext] || 'application/octet-stream';
+}
+
+function mediaFallbackUrl(safePath) {
+  if (safePath.startsWith('img/')) {
+    return new URL(safePath.slice(4), mediaFallbackImgBase).toString();
+  }
+  if (safePath.startsWith('gif/')) {
+    return new URL(safePath.slice(4), mediaFallbackGifBase).toString();
+  }
+  return null;
 }
 
 function serveStatic(req, res) {
@@ -113,6 +127,13 @@ function serveStatic(req, res) {
       const source = fs.createReadStream(filePath);
       res.writeHead(200, { 'Content-Type': getMimeType(filePath) });
       source.pipe(res);
+      return;
+    }
+
+    const fallbackMedia = mediaFallbackUrl(safePath);
+    if (fallbackMedia) {
+      res.writeHead(302, { Location: fallbackMedia });
+      res.end();
       return;
     }
 
