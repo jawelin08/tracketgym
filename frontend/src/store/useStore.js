@@ -585,23 +585,23 @@ export const useStore = create((set, get) => {
         finishBoot()
         return
       }
-      // Default local profile for this device only. If a real user/session is already present,
-      // keep it and let the normal sync flow proceed instead of overwriting it.
-      const personal = { id: 'mi-tracking', name: 'Mi tracking' }
-      if (!get().user && !get().isGuest()) {
-        get().setUser(personal)
-      }
       const tz = localTZ()
       if (get().S.reminder?.on && get().S.reminder.tz !== tz) {
         get().update(s => { s.reminder = { ...s.reminder, tz } })
       }
-      // Signed-in remote profiles continue through the normal sync flow. The local personal
-      // profile is intentionally device-only and must never try to hydrate a shared account.
-      if (get().user && get().user.id !== personal.id && !get().isGuest()) {
+      // Web flow: load public instance config, honour allow_guest, and if a previous user exists
+      // validate that session with /api/me before pulling state.
+      const cfg = await get().loadConfig()
+      if (!guestAllowed(cfg) && get().isGuest()) get().setGuest(false)
+      if (get().user) {
         try {
-          await get().loadConfig()
+          const me = await api('/api/me')
+          get().setUser(me.user)
           await get().pullState()
-        } catch (_e) { /* offline or unauthenticated: keep the local copy and continue booting */ }
+        } catch (e) {
+          if (e.status === 401) get().setUser(null)
+          else setSync({ offline: true })
+        }
       }
       finishBoot()
     }

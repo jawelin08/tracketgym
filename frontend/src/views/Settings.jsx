@@ -208,11 +208,15 @@ export default function Settings() {
         <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
       </> : user ? <>
-        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Mi tracking personal — todo queda en este dispositivo.')} />
-        <Row icon="signOut" iconTint="var(--red)" title={t('Cerrar sesión')} danger onClick={() => confirmSheet({ title: t('Cerrar sesión?'), message: t('Se borra el tracking personal de este dispositivo.'), confirmText: t('Cerrar sesión'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
+        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Signed in with passkey — data syncs to this profile.')} />
+        {user.admin && <Row icon="wrench" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
+        <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger
+          onClick={() => confirmSheet({ title: t('Sign out?'), message: t('Your data remains in this profile on the server.'), confirmText: t('Sign out'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
+        <Row icon="lock" iconTint="var(--red)" title={t('Sign out everywhere')} danger onClick={signOutEverywhere} />
       </> : <>
-        <Row icon="personCircle" iconTint="var(--grey)" title={t('Mi tracking')} subtitle={t('Todo queda aquí y no se mezcla con otros usuarios.')} />
-        <Row icon="sparkles" iconTint="var(--acc)" title={t('Entrar a Mi tracking')} onClick={() => { const u = { id: 'mi-tracking', name: 'Mi tracking' }; useStore.getState().setUser(u); useStore.getState().adoptProfile(() => false); toast(t('Bienvenido a tu tracking personal')); }} />
+        <Row icon="personCircle" iconTint="var(--grey)" title={t('Not signed in')} subtitle={webauthnOK() ? t('Passkeys use {0} — no passwords.', IS_ANDROID ? 'Google Password Manager' : 'your password manager') : t('Passkeys not supported in this browser.')} />
+        {webauthnOK() && <Row icon="key" iconTint="var(--acc)" title={t('Sign in with passkey')} onClick={signInHere} />}
+        {webauthnOK() && <Row icon="personPlus" iconTint="var(--indigo)" title={t('Create passkey profile')} onClick={registerHere} />}
       </>}
     </Section>
     {!user && !DEMO && !MOBILE && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode — data lives only in this browser.')}</p>}
