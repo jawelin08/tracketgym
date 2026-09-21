@@ -7,7 +7,7 @@ import { useUI } from '../store/useUI.js'
 import { ACCENTS, todayISO, localTZ, weekStartOf, MONDAY, SUNDAY } from '../lib/format.js'
 import { effortOf } from '../lib/history.js'
 import { unlock, playOnSilentSupported } from '../lib/sound.js'
-import { api, webauthnOK, passkeyLogin, passkeyRegister, IS_ANDROID } from '../lib/api.js'
+import { api, passwordLogin, passwordRegister, IS_ANDROID } from '../lib/api.js'
 import { pushSupported, enablePush, disablePush, sendTestPush, syncPushSubscription } from '../lib/push.js'
 import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, LANGS, INSTR_LANGS } from '../lib/i18n.js'
@@ -143,17 +143,14 @@ export default function Settings() {
     }
     rd.readAsText(f)
   }
-  const signInHere = async () => {
-    try { const u = await passkeyLogin(); setUser(u); await adoptProfile(askAddDeviceData); toast(t('Welcome back, {0}', u.name)) }
-    catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Sign-in failed')) }
-  }
-  const registerHere = () => useUI.getState().openSheet(close => <RegisterInline close={close} setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
+  const signInHere = () => useUI.getState().openSheet(close => <AccountInline close={close} mode="login" setUser={setUser} adoptProfile={adoptProfile} toast={toast} />)
+  const registerHere = () => useUI.getState().openSheet(close => <AccountInline close={close} mode="register" setUser={setUser} pushState={pushState} pullState={pullState} toast={toast} />)
   // Ends the profile's sessions on every device — this one included, so on success it lands in
   // the same place as the plain sign-out above (home, local data cleared). On failure nothing
   // local is touched: still signed in here, and say so rather than leaving a half-signed-out app.
   const signOutEverywhere = () => confirmSheet({
     title: t('Sign out everywhere?'),
-    message: t('Signs this profile out on every device, including this one. Your passkeys keep working — sign in with them again anytime.'),
+    message: t('Signs this profile out on every device, including this one.'),
     confirmText: t('Sign out everywhere'), danger: true,
     onConfirm: async () => {
       try { await signOutAll(); nav('/home'); toast(t('Signed out on all devices')) }
@@ -208,15 +205,15 @@ export default function Settings() {
         <Row icon="rocket" iconTint="var(--indigo)" title={t('Self-host openGym')} subtitle={t('Passkey sign-in, sync across your devices, your own data.')} accessory="chevron"
           onClick={() => window.open(REPO, '_blank', 'noopener')} />
       </> : user ? <>
-        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Signed in with passkey — data syncs to this profile.')} />
+        <Row icon="personCircle" iconTint="var(--grey)" title={user.name} subtitle={t('Sesión iniciada con cuenta — los datos se sincronizan con este perfil.')} />
         {user.admin && <Row icon="wrench" iconTint="var(--indigo)" title={t('Admin dashboard')} accessory="chevron" onClick={() => nav('/admin')} />}
         <Row icon="signOut" iconTint="var(--red)" title={t('Sign out')} danger
           onClick={() => confirmSheet({ title: t('Sign out?'), message: t('Your data remains in this profile on the server.'), confirmText: t('Sign out'), danger: true, onConfirm: () => { signOut(); nav('/home') } })} />
         <Row icon="lock" iconTint="var(--red)" title={t('Sign out everywhere')} danger onClick={signOutEverywhere} />
       </> : <>
-        <Row icon="personCircle" iconTint="var(--grey)" title={t('Not signed in')} subtitle={webauthnOK() ? t('Passkeys use {0} — no passwords.', IS_ANDROID ? 'Google Password Manager' : 'your password manager') : t('Passkeys not supported in this browser.')} />
-        {webauthnOK() && <Row icon="key" iconTint="var(--acc)" title={t('Sign in with passkey')} onClick={signInHere} />}
-        {webauthnOK() && <Row icon="personPlus" iconTint="var(--indigo)" title={t('Create passkey profile')} onClick={registerHere} />}
+        <Row icon="personCircle" iconTint="var(--grey)" title={t('Not signed in')} subtitle={t('Accede con correo/usuario y contraseña.')} />
+        <Row icon="key" iconTint="var(--acc)" title={t('Iniciar sesión')} onClick={signInHere} />
+        <Row icon="personPlus" iconTint="var(--indigo)" title={t('Crear cuenta')} onClick={registerHere} />
       </>}
     </Section>
     {!user && !DEMO && !MOBILE && <p className="sect-f" style={{ marginTop: -18, marginBottom: 22 }}>{t('Guest mode — data lives only in this browser.')}</p>}
@@ -672,34 +669,69 @@ function PairSheet({ close }) {
   </>
 }
 
-// The same registration as the sign-in screen's, reached from Settings instead. It asks for
-// the invite code on the same terms: an invite-only instance rejects a registration without
-// one, so a form that cannot collect it is a form that cannot succeed.
-function RegisterInline({ close, setUser, pushState, pullState, toast }) {
-  const nameRef = useRef(null)
+// Account login/register from Settings, mirroring the main login screen flow.
+function AccountInline({ close, mode, setUser, adoptProfile, pushState, pullState, toast }) {
+  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
+  const [identifier, setIdentifier] = useState('')
+  const [password, setPassword] = useState('')
+  const [password2, setPassword2] = useState('')
   const [code, setCode] = useState('')
   const [inviteOnly, setInviteOnly] = useState(false)
+  const isRegister = mode === 'register'
   useEffect(() => { api('/api/config').then(c => setInviteOnly(!!c.invite_only)).catch(() => {}) }, [])
-  const go = async () => {
-    const n = (nameRef.current.value || '').trim()
-    if (!n) { toast(t('Enter a name')); return }
-    if (inviteOnly && !code.trim()) { toast(t('An invite code is required')); return }
+
+  const login = async () => {
+    const id = identifier.trim()
+    if (!id || !password) { toast(t('Rellena usuario/correo y contraseña')); return }
     try {
-      const u = await passkeyRegister(n, code.trim()); setUser(u); close()
+      const u = await passwordLogin({ identifier: id, password })
+      setUser(u)
+      await adoptProfile(askAddDeviceData)
+      close()
+      toast(t('Welcome back, {0}', u.name))
+    } catch (e) { toast(e.message || t('Sign-in failed')) }
+  }
+
+  const register = async () => {
+    const e = email.trim().toLowerCase()
+    const uName = username.trim()
+    if (!e || !uName || !password) { toast(t('Completa email, usuario y contraseña')); return }
+    if (password.length < 8) { toast(t('La contraseña debe tener al menos 8 caracteres')); return }
+    if (password !== password2) { toast(t('Las contraseñas no coinciden')); return }
+    if (inviteOnly && !code.trim()) { toast(t('Se requiere código de invitación')); return }
+    try {
+      const u = await passwordRegister({ email: e, username: uName, password, code: code.trim() })
+      setUser(u)
+      close()
       if (hasData(useStore.getState().S)) { await pushState(); toast(t('Profile created — data moved into it')) }
       else { await pullState(); toast(t('Welcome, {0}', u.name)) }
-    } catch (e) { if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Registration failed')) }
+    } catch (e) { toast(e.message || t('Registration failed')) }
   }
+
   return <>
-    <h3>{t('Create your profile')}</h3>
-    <div className="muted small" style={{ marginBottom: 14 }}>{t('Pick a name, then confirm with your device.')}</div>
-    <TextField ref={nameRef} placeholder={t('Your name')} maxLength={40} />
-    {inviteOnly && <>
+    <h3>{isRegister ? t('Crear cuenta') : t('Iniciar sesión')}</h3>
+    <div className="muted small" style={{ marginBottom: 14 }}>{isRegister ? t('Regístrate con correo, usuario y contraseña.') : t('Accede con tu correo o usuario y contraseña.')}</div>
+    {isRegister ? <>
+      <TextField value={email} onChange={e => setEmail(e.target.value)} placeholder={t('Correo electrónico')} maxLength={120} />
       <div style={{ height: 10 }} />
-      <input className="input" placeholder={t('Invite code')} maxLength={40} value={code}
-        onChange={e => setCode(e.target.value.toUpperCase())} style={{ letterSpacing: '.14em', fontWeight: 600, textAlign: 'center' }} />
-      <div className="dim small" style={{ marginTop: 6 }}>{t('This app is invite-only — enter the code you were given.')}</div>
+      <TextField value={username} onChange={e => setUsername(e.target.value)} placeholder={t('Nombre de usuario')} maxLength={40} />
+      <div style={{ height: 10 }} />
+      <TextField value={password} onChange={e => setPassword(e.target.value)} placeholder={t('Contraseña')} type="password" maxLength={120} />
+      <div style={{ height: 10 }} />
+      <TextField value={password2} onChange={e => setPassword2(e.target.value)} placeholder={t('Repite la contraseña')} type="password" maxLength={120} />
+      {inviteOnly && <>
+        <div style={{ height: 10 }} />
+        <input className="input" placeholder={t('Código de invitación')} maxLength={40} value={code}
+          onChange={e => setCode(e.target.value.toUpperCase())} style={{ letterSpacing: '.14em', fontWeight: 600, textAlign: 'center' }} />
+        <div className="dim small" style={{ marginTop: 6 }}>{t('Esta instancia requiere invitación para registrarse.')}</div>
+      </>}
+      <div style={{ height: 12 }} /><Button variant="primary" onClick={register}>{t('Crear cuenta')}</Button>
+    </> : <>
+      <TextField value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder={t('Correo o usuario')} maxLength={120} />
+      <div style={{ height: 10 }} />
+      <TextField value={password} onChange={e => setPassword(e.target.value)} placeholder={t('Contraseña')} type="password" maxLength={120} />
+      <div style={{ height: 12 }} /><Button variant="primary" onClick={login}>{t('Entrar')}</Button>
     </>}
-    <div style={{ height: 12 }} /><Button variant="primary" onClick={go}>{t('Create passkey')}</Button>
   </>
 }

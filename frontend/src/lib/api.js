@@ -81,3 +81,19 @@ export async function passkeyLogin() {
   const res = await api('/api/login/verify', { method: 'POST', body: JSON.stringify({ cid, credential: credToJSON(cred) }) })
   return res.user
 }
+
+export async function passwordRegister({ email, username, password, code = '' }) {
+  const res = await api('/api/auth/register', {
+    method: 'POST',
+    body: JSON.stringify({ email, username, password, code })
+  })
+  return res.user
+}
+
+export async function passwordLogin({ identifier, password }) {
+  const res = await api('/api/auth/login', {
+    method: 'POST',
+    body: JSON.stringify({ identifier, password })
+  })
+  return res.user
+}

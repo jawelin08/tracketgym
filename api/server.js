@@ -77,6 +77,22 @@ function atomicWrite(file, content, mode) {
   fs.writeFileSync(tmp, content, mode ? { mode } : undefined);
   fs.renameSync(tmp, file);
 }
+
+function normalizeEmail(v) {
+  return String(v || '').trim().toLowerCase();
+}
+function normalizeUsername(v) {
+  return String(v || '').trim().toLowerCase();
+}
+function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
+  const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  return { salt, hash };
+}
+function verifyPassword(password, salt, hash) {
+  const calc = crypto.scryptSync(String(password), salt, 64).toString('hex');
+  try { return crypto.timingSafeEqual(Buffer.from(calc, 'hex'), Buffer.from(hash, 'hex')); }
+  catch { return false; }
+}
 const stateFile = uid => path.join(DATA, 'state-' + uid.replace(/[^a-zA-Z0-9_-]/g, '') + '.json');
 function readState(uid) {
   try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
@@ -452,6 +468,7 @@ const clearCookie = COOKIE === LEGACY_COOKIE
 const CSRF_EXEMPT = new Set([
   'POST /api/register/options', 'POST /api/register/verify',
   'POST /api/login/options', 'POST /api/login/verify',
+  'POST /api/auth/register', 'POST /api/auth/login',
   'POST /api/pair/redeem'
 ]);
 const originsMatch = (a, b) => a.replace(/\/+$/, '') === b.replace(/\/+$/, '');
@@ -654,6 +671,77 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } });
+  },
+
+  'POST /api/auth/register': async (req, res) => {
+    const body = await readBody(req);
+    const email = normalizeEmail(body.email);
+    const username = String(body.username || '').trim().slice(0, 40);
+    const usernameLower = normalizeUsername(username);
+    const password = String(body.password || '');
+    if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 400, { error: 'valid email required' });
+    if (!usernameLower || username.length < 3) return json(res, 400, { error: 'username must be at least 3 characters' });
+    if (password.length < 8) return json(res, 400, { error: 'password must be at least 8 characters' });
+
+    const code = String(body.code || '').trim().toUpperCase();
+    if (INVITE_ONLY && !db.invites.some(i => i.code === code && !i.usedBy && !i.revoked)) {
+      audit(req, 'auth.password.register.denied', { ok: false, name: username, msg: 'invite-rejected' });
+      return json(res, 403, { error: 'a valid invite code is required' });
+    }
+
+    if (db.users.some(u => normalizeEmail(u.email) === email)) return json(res, 409, { error: 'email already in use' });
+    if (db.users.some(u => normalizeUsername(u.username || u.name) === usernameLower)) return json(res, 409, { error: 'username already in use' });
+
+    const uid = crypto.randomBytes(12).toString('base64url');
+    const { salt, hash } = hashPassword(password);
+    const user = {
+      id: uid,
+      name: username,
+      username,
+      email,
+      usernameLower,
+      emailLower: email,
+      passwordSalt: salt,
+      passwordHash: hash,
+      created: new Date().toISOString()
+    };
+
+    if (INVITE_ONLY) {
+      const invite = db.invites.find(i => i.code === code && !i.usedBy && !i.revoked);
+      if (!invite) return json(res, 403, { error: 'invite code is no longer valid — ask for a new one' });
+      invite.usedBy = user.id;
+      invite.usedAt = user.created;
+      user.invitedBy = invite.code;
+    }
+
+    db.users.push(user);
+    saveDb();
+    audit(req, 'auth.password.register.ok', { user });
+    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
+  },
+
+  'POST /api/auth/login': async (req, res) => {
+    const body = await readBody(req);
+    const identifier = String(body.identifier || '').trim().toLowerCase();
+    const password = String(body.password || '');
+    if (!identifier || !password) return json(res, 400, { error: 'identifier and password required' });
+
+    const user = db.users.find(u => (normalizeEmail(u.email) === identifier) || (normalizeUsername(u.username || u.name) === identifier));
+    if (!user || !user.passwordHash || !user.passwordSalt) {
+      audit(req, 'auth.password.login.fail', { ok: false, msg: 'unknown-user' });
+      return json(res, 401, { error: 'invalid credentials' });
+    }
+    if (user.disabled) {
+      audit(req, 'auth.password.login.fail', { ok: false, user, msg: 'account-disabled' });
+      return json(res, 403, { error: 'this account has been disabled' });
+    }
+    if (!verifyPassword(password, user.passwordSalt, user.passwordHash)) {
+      audit(req, 'auth.password.login.fail', { ok: false, user, msg: 'bad-password' });
+      return json(res, 401, { error: 'invalid credentials' });
+    }
+
+    audit(req, 'auth.password.login.ok', { user });
+    json(res, 200, { user: { id: user.id, name: user.name, admin: isAdmin(user) } }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/register/options': async (req, res) => {

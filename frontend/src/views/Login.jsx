@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react'
 import { useStore, hasData } from '../store/useStore.js'
 import { useUI } from '../store/useUI.js'
 import { t } from '../lib/i18n.js'
-import { webauthnOK, passkeyLogin, passkeyRegister, BIO, VAULT } from '../lib/api.js'
+import { passwordLogin, passwordRegister } from '../lib/api.js'
 import { guestAllowed } from '../lib/guest.js'
 import { askAddDeviceData } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
@@ -13,7 +13,11 @@ export default function Login() {
   const toast = useUI(s => s.toast)
   const [mode, setMode] = useState('login')
   const [busy, setBusy] = useState(false)
-  const [name, setName] = useState('')
+  const [email, setEmail] = useState('')
+  const [username, setUsername] = useState('')
+  const [identifier, setIdentifier] = useState('')
+  const [password, setPassword] = useState('')
+  const [password2, setPassword2] = useState('')
   const [code, setCode] = useState('')
   const [cfg, setCfg] = useState(null)
 
@@ -21,43 +25,47 @@ export default function Login() {
     loadConfig().then(c => setCfg(c || null)).catch(() => {})
   }, [loadConfig])
 
-  const canPasskey = webauthnOK()
   const allowGuest = guestAllowed(cfg)
   const inviteOnly = !!cfg?.invite_only
 
   const signIn = async () => {
-    if (!canPasskey || busy) return
+    if (busy) return
+    const id = identifier.trim()
+    if (!id || !password) { toast(t('Rellena usuario/correo y contraseña')); return }
     setBusy(true)
     try {
-      const u = await passkeyLogin()
+      const u = await passwordLogin({ identifier: id, password })
       setUser(u)
       await adoptProfile(askAddDeviceData)
-      toast(t('Welcome back, {0}', u.name))
+      toast(t('Bienvenido de nuevo, {0}', u.name))
     } catch (e) {
-      if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Sign-in failed'))
+      toast(e.message || t('No se pudo iniciar sesión'))
     } finally {
       setBusy(false)
     }
   }
 
   const register = async () => {
-    if (!canPasskey || busy) return
-    const n = name.trim()
-    if (!n) { toast(t('Enter a name')); return }
-    if (inviteOnly && !code.trim()) { toast(t('An invite code is required')); return }
+    if (busy) return
+    const e = email.trim().toLowerCase()
+    const uName = username.trim()
+    if (!e || !uName || !password) { toast(t('Completa email, usuario y contraseña')); return }
+    if (password.length < 8) { toast(t('La contraseña debe tener al menos 8 caracteres')); return }
+    if (password !== password2) { toast(t('Las contraseñas no coinciden')); return }
+    if (inviteOnly && !code.trim()) { toast(t('Se requiere código de invitación')); return }
     setBusy(true)
     try {
-      const u = await passkeyRegister(n, code.trim())
+      const u = await passwordRegister({ email: e, username: uName, password, code: code.trim() })
       setUser(u)
       if (hasData(useStore.getState().S)) {
         await pushState()
-        toast(t('Profile created — data moved into it'))
+        toast(t('Cuenta creada: tus datos se han movido al perfil'))
       } else {
         await pullState()
-        toast(t('Welcome, {0}', u.name))
+        toast(t('Bienvenido, {0}', u.name))
       }
     } catch (e) {
-      if (e.name !== 'NotAllowedError' && e.name !== 'AbortError') toast(e.message || t('Registration failed'))
+      toast(e.message || t('No se pudo crear la cuenta'))
     } finally {
       setBusy(false)
     }
@@ -69,7 +77,7 @@ export default function Login() {
     toast(t('Guest mode — data lives only in this browser.'))
   }
 
-  const wrap = { minHeight: '82vh', display: 'grid', placeItems: 'center' }
+  const wrap = { minHeight: '82vh', display: 'grid', placeItems: 'center', paddingTop: 8, paddingBottom: 8 }
 
   return (
     <div className="narrow" style={wrap}>
@@ -80,50 +88,51 @@ export default function Login() {
           </div>
           <div>
             <h1 style={{ margin: 0, fontSize: 30, letterSpacing: '-.02em' }}>GYMTracker</h1>
-            <div className="muted small">{t('Entrenamiento personal, perfiles separados y sincronización segura')}</div>
+            <div className="muted small">{t('Cuenta personal con email, usuario y contraseña')}</div>
           </div>
         </div>
 
-        <div className="row" style={{ gap: 8, marginBottom: 14 }}>
-          <button className={'chip' + (mode === 'login' ? ' on' : '')} onClick={() => setMode('login')}>{t('Sign in with passkey')}</button>
-          <button className={'chip' + (mode === 'register' ? ' on' : '')} onClick={() => setMode('register')}>{t('Create new profile')}</button>
+        <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginBottom: 14 }}>
+          <button className={'chip' + (mode === 'login' ? ' on' : '')} onClick={() => setMode('login')}>{t('Iniciar sesión')}</button>
+          <button className={'chip' + (mode === 'register' ? ' on' : '')} onClick={() => setMode('register')}>{t('Crear cuenta')}</button>
         </div>
-
-        {!canPasskey && (
-          <div className="card small muted" style={{ marginBottom: 12 }}>
-            {allowGuest
-              ? t("This browser doesn't support passkeys — you can still use openGym locally on this device.")
-              : t("This browser doesn't support passkeys, and this instance requires an account. Try a browser or device with passkey support.")}
-          </div>
-        )}
 
         {mode === 'register' && (
           <>
-            <TextField value={name} onChange={e => setName(e.target.value)} placeholder={t('Your name')} maxLength={40} />
+            <TextField value={email} onChange={e => setEmail(e.target.value)} placeholder={t('Correo electrónico')} maxLength={120} />
+            <div style={{ height: 10 }} />
+            <TextField value={username} onChange={e => setUsername(e.target.value)} placeholder={t('Nombre de usuario')} maxLength={40} />
+            <div style={{ height: 10 }} />
+            <TextField value={password} onChange={e => setPassword(e.target.value)} placeholder={t('Contraseña')} type="password" maxLength={120} />
+            <div style={{ height: 10 }} />
+            <TextField value={password2} onChange={e => setPassword2(e.target.value)} placeholder={t('Repite la contraseña')} type="password" maxLength={120} />
             {inviteOnly && (
               <>
                 <div style={{ height: 10 }} />
                 <input
                   className="input"
-                  placeholder={t('Invite code')}
+                  placeholder={t('Código de invitación')}
                   value={code}
                   maxLength={40}
                   onChange={e => setCode(e.target.value.toUpperCase())}
                   style={{ letterSpacing: '.14em', fontWeight: 600, textAlign: 'center' }}
                 />
-                <div className="dim small" style={{ marginTop: 6 }}>{t('This app is invite-only — enter the code you were given.')}</div>
+                <div className="dim small" style={{ marginTop: 6 }}>{t('Esta instancia requiere invitación para registrarse.')}</div>
               </>
             )}
             <div style={{ height: 12 }} />
-            <Button variant="primary" icon="personPlus" onClick={register} disabled={!canPasskey || busy}>{t('Create passkey')}</Button>
-            <div className="dim small" style={{ marginTop: 10 }}>{t('Pick a name, then confirm with {0}. The passkey is saved in your device — no password needed.', BIO)}</div>
+            <Button variant="primary" icon="personPlus" onClick={register} disabled={busy}>{t('Crear cuenta')}</Button>
+            <div className="dim small" style={{ marginTop: 10 }}>{t('Tu cuenta queda separada por usuario y contraseña.')}</div>
           </>
         )}
 
         {mode === 'login' && (
           <>
-            <Button variant="primary" icon="key" onClick={signIn} disabled={!canPasskey || busy}>{t('Sign in with passkey')}</Button>
-            <div className="dim small" style={{ marginTop: 10 }}>{t('Passkeys use {0} — no passwords.', VAULT)}</div>
+            <TextField value={identifier} onChange={e => setIdentifier(e.target.value)} placeholder={t('Correo o usuario')} maxLength={120} />
+            <div style={{ height: 10 }} />
+            <TextField value={password} onChange={e => setPassword(e.target.value)} placeholder={t('Contraseña')} type="password" maxLength={120} />
+            <div style={{ height: 12 }} />
+            <Button variant="primary" icon="key" onClick={signIn} disabled={busy}>{t('Entrar')}</Button>
           </>
         )}
 
