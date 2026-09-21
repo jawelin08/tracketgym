@@ -901,6 +901,11 @@ const routes = {
 
     db.users.push(user);
     saveDb();
+    // First user becomes admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
+    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
+      user.admin = true;
+      saveDb();
+    }
     audit(req, 'auth.password.register.ok', { user });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
@@ -926,6 +931,11 @@ const routes = {
     }
 
     audit(req, 'auth.password.login.ok', { user });
+    // Promote first user to admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
+    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
+      user.admin = true;
+      saveDb();
+    }
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
@@ -1001,6 +1011,11 @@ const routes = {
       transports: body.credential?.response?.transports || []
     });
     saveDb();
+    // First user becomes admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
+    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
+      user.admin = true;
+      saveDb();
+    }
     audit(req, 'auth.register.ok', { user, msg: invite ? invite.code : null });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
