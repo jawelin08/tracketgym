@@ -65,11 +65,12 @@ if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(
 const SECRET = fs.readFileSync(secretFile, 'utf8').trim();
 
 const dbFile = path.join(DATA, 'db.json');
-let db = { users: [], creds: [], subs: [], invites: [], gyms: [] };
+let db = { users: [], creds: [], subs: [], invites: [], gyms: [], platformInvites: [] };
 try { db = JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch {}
 db.subs = db.subs || [];
 db.invites = db.invites || [];
 db.gyms = Array.isArray(db.gyms) ? db.gyms : [];
+db.platformInvites = Array.isArray(db.platformInvites) ? db.platformInvites : [];
 const isSuperAdmin = user => !!user && (user.superadmin === true || SUPER_ADMIN_UIDS.includes(user.id));
 const isAdmin = user => !!user && (isSuperAdmin(user) || user.admin === true || ADMIN_UIDS.includes(user.id));
 // 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
@@ -126,6 +127,42 @@ function publicUser(user) {
     gymName: gym?.name || null
   };
 }
+function gymMembers(gymId) {
+  return db.users.filter(u => userGymId(u) === gymId);
+}
+function gymSeatsUsed(gymId) {
+  return gymMembers(gymId).length;
+}
+function gymAccessPolicy(gym) {
+  if (!gym) return { ok: true };
+  const status = gymStatusOf(gym.status);
+  if (status === 'paused') return { ok: false, error: 'this gym is paused' };
+  if (status === 'suspended') return { ok: false, error: 'this gym is suspended' };
+  const exp = gym.licenseExpiresAt ? Date.parse(gym.licenseExpiresAt) : NaN;
+  if (Number.isFinite(exp) && exp < Date.now()) return { ok: false, error: 'this gym license has expired' };
+  return { ok: true };
+}
+function gymPolicyForUser(user) {
+  return gymAccessPolicy(gymById(userGymId(user)));
+}
+function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) {
+  const token = crypto.randomBytes(24).toString('base64url');
+  const invite = {
+    token,
+    gymId,
+    email: normalizeEmail(email),
+    role,
+    name: String(name || '').trim().slice(0, 60),
+    created: new Date().toISOString(),
+    expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
+    usedBy: null
+  };
+  db.platformInvites.push(invite);
+  return invite;
+}
+function platformInviteOf(token) {
+  return db.platformInvites.find(i => i.token === token) || null;
+}
 const MEMBER_STATUSES = new Set(['lead', 'active', 'paused', 'former']);
 function memberStatusOf(v) {
   const s = String(v || '').trim().toLowerCase();
@@ -173,11 +210,22 @@ function readState(uid) {
     g.seats = seats;
     g.slug = slug;
     g.note = String(g.note || '').slice(0, 240);
+    if (g.licenseExpiresAt != null) {
+      const d = new Date(g.licenseExpiresAt);
+      g.licenseExpiresAt = Number.isFinite(d.getTime()) ? d.toISOString() : null;
+    } else g.licenseExpiresAt = null;
   }
   const def = defaultGymId();
   for (const u of db.users) {
     if (!u.gymId || !gymById(u.gymId)) { u.gymId = def; changed = true; }
   }
+  const now = Date.now();
+  const beforeInvites = db.platformInvites.length;
+  db.platformInvites = db.platformInvites.filter(i => {
+    const exp = Date.parse(i?.expiresAt || '');
+    return i && i.token && i.gymId && i.email && !i.usedBy && Number.isFinite(exp) && exp > now;
+  });
+  if (db.platformInvites.length !== beforeInvites) changed = true;
   if (changed) saveDb();
 }
 
@@ -510,6 +558,7 @@ function readSession(req) {
   const user = db.users.find(u => u.id === uid) || null;
   if (!user) return null;
   if (user.disabled) return null;           // disabled accounts are locked out everywhere
+  if (!gymPolicyForUser(user).ok) return null;
   // Missing third field = pre-versioning cookie = version 0. Anything non-numeric is a malformed
   // payload (it still had to pass the HMAC, so this is belt-and-braces) and is refused outright.
   const claimed = ver === undefined ? 0 : Number(ver);
@@ -534,13 +583,15 @@ function requireSuperAdmin(req, res) {
 const expireCookie = name => `${name}=; Path=/; Max-Age=0; HttpOnly;${SECURE} SameSite=Lax`;
 function sessionCookie(user) {
   const fresh = `${COOKIE}=${makeSession(user)}; Path=/; Max-Age=${SESSION_DAYS * 86400}; HttpOnly;${SECURE} SameSite=Lax`;
-  // Signing in also retires any pre-upgrade cookie, so nobody is left carrying an unprefixed one
-  // (or a shadowing copy of it) alongside the new session.
-  return COOKIE === LEGACY_COOKIE ? [fresh] : [fresh, expireCookie(LEGACY_COOKIE)];
+  // Single string when there's no legacy cookie to retire; concatenated string when there is
+  // (comma-separated Set-Cookie is the HTTP spec form — arrays through Node's http module get
+  // mishandled by some proxies, including Railway's edge, which may only surface the last value).
+  if (COOKIE === LEGACY_COOKIE) return fresh;
+  return fresh + ', ' + expireCookie(LEGACY_COOKIE);
 }
 const clearCookie = COOKIE === LEGACY_COOKIE
-  ? [expireCookie(LEGACY_COOKIE)]
-  : [expireCookie(COOKIE), expireCookie(LEGACY_COOKIE)];
+  ? expireCookie(LEGACY_COOKIE)
+  : expireCookie(COOKIE) + ', ' + expireCookie(LEGACY_COOKIE);
 
 /* ---------- CSRF ---------- */
 // SameSite=Lax keeps the session cookie off a genuinely cross-*site* request. It does not keep it
@@ -756,6 +807,25 @@ const routes = {
     json(res, 200, { invite_only: INVITE_ONLY, allow_guest: ALLOW_GUEST, ...(coach ? { coach } : {}) });
   },
 
+  'GET /api/platform/invite': async (req, res) => {
+    const token = new URL(req.url, 'http://x').searchParams.get('token') || '';
+    const inv = platformInviteOf(token);
+    if (!inv) return json(res, 404, { error: 'invalid invite' });
+    const exp = Date.parse(inv.expiresAt || '');
+    if (!Number.isFinite(exp) || exp < Date.now()) return json(res, 410, { error: 'invite expired' });
+    const gym = gymById(inv.gymId);
+    if (!gym) return json(res, 404, { error: 'gym not found' });
+    json(res, 200, {
+      invite: {
+        gymId: gym.id,
+        gymName: gym.name,
+        email: inv.email,
+        role: inv.role,
+        expiresAt: inv.expiresAt
+      }
+    });
+  },
+
   'GET /api/me': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
@@ -768,9 +838,19 @@ const routes = {
     const username = String(body.username || '').trim().slice(0, 40);
     const usernameLower = normalizeUsername(username);
     const password = String(body.password || '');
+    const platformInviteToken = String(body.platformInviteToken || '').trim();
+    const platformInvite = platformInviteToken ? platformInviteOf(platformInviteToken) : null;
     if (!email || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return json(res, 400, { error: 'valid email required' });
     if (!usernameLower || username.length < 3) return json(res, 400, { error: 'username must be at least 3 characters' });
     if (password.length < 8) return json(res, 400, { error: 'password must be at least 8 characters' });
+
+    if (platformInviteToken) {
+      if (!platformInvite) return json(res, 400, { error: 'invalid platform invite' });
+      const exp = Date.parse(platformInvite.expiresAt || '');
+      if (!Number.isFinite(exp) || exp < Date.now()) return json(res, 410, { error: 'platform invite expired' });
+      if (platformInvite.usedBy) return json(res, 409, { error: 'platform invite already used' });
+      if (platformInvite.email && platformInvite.email !== email) return json(res, 400, { error: 'this invite is for a different email' });
+    }
 
     const code = String(body.code || '').trim().toUpperCase();
     if (INVITE_ONLY && !db.invites.some(i => i.code === code && !i.usedBy && !i.revoked)) {
@@ -783,11 +863,17 @@ const routes = {
 
     const uid = crypto.randomBytes(12).toString('base64url');
     const { salt, hash } = hashPassword(password);
+    const gym = gymById(platformInvite?.gymId || defaultGymId());
+    if (!gym) return json(res, 500, { error: 'gym not configured' });
+    const gymPolicy = gymAccessPolicy(gym);
+    if (!gymPolicy.ok) return json(res, 403, { error: gymPolicy.error });
+    if (gymSeatsUsed(gym.id) >= Math.max(1, +gym.seats || 1)) return json(res, 403, { error: 'seat limit reached for this gym' });
     const user = {
       id: uid,
       name: username,
       username,
       email,
+      gymId: gym.id,
       usernameLower,
       emailLower: email,
       passwordSalt: salt,
@@ -803,8 +889,17 @@ const routes = {
       user.invitedBy = invite.code;
     }
 
+    if (platformInvite) {
+      platformInvite.usedBy = user.id;
+      platformInvite.usedAt = user.created;
+      platformInvite.role = platformInvite.role || 'owner';
+      if (platformInvite.role === 'owner') {
+        user.admin = true;
+        gym.ownerId = user.id;
+      }
+    }
+
     db.users.push(user);
-    user.gymId = user.gymId || defaultGymId();
     saveDb();
     audit(req, 'auth.password.register.ok', { user });
     json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
