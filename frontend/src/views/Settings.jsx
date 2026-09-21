@@ -15,6 +15,16 @@ import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, syncReminder } from '../lib/mobile.js'
 import { checkForUpdate, downloadAndInstall } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
+import {
+  spotifyClientConfigured,
+  getSpotifyAuth,
+  clearSpotifyAuth,
+  startSpotifyAuth,
+  completeSpotifyAuthIfPresent,
+  spotifyNowPlaying,
+  spotifyAction,
+  spotifyOpenYouTubeMusic,
+} from '../lib/spotify.js'
 import { ConnectSheet } from './MobileOnboarding.jsx'
 import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, menuSheet, askAddDeviceData } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
@@ -50,6 +60,53 @@ export default function Settings() {
   const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
   const [android, setAndroid] = useState(false)
   const [checking, setChecking] = useState(false)
+  const [spotifyAuth, setSpotifyAuth] = useState(() => getSpotifyAuth())
+  const [spotifyBusy, setSpotifyBusy] = useState(false)
+  const [spotifyPlayer, setSpotifyPlayer] = useState(null)
+  const spotifyReady = spotifyClientConfigured()
+
+  const refreshSpotify = async (quiet = false) => {
+    if (!spotifyAuth) return
+    if (!quiet) setSpotifyBusy(true)
+    try {
+      const nowPlaying = await spotifyNowPlaying(spotifyAuth)
+      setSpotifyPlayer(nowPlaying)
+    } catch (e) {
+      if (e.status === 401) {
+        clearSpotifyAuth()
+        setSpotifyAuth(null)
+        setSpotifyPlayer(null)
+        toast(t('Spotify session expired. Connect again.'))
+      } else if (!quiet) {
+        toast(e.message || t('Could not read Spotify playback right now.'))
+      }
+    }
+    if (!quiet) setSpotifyBusy(false)
+  }
+
+  const connectSpotify = async () => {
+    if (!spotifyReady) { toast(t('Spotify is not configured on this build.')); return }
+    try { await startSpotifyAuth() }
+    catch (e) { toast(e.message || t('Could not open Spotify login.')) }
+  }
+
+  const disconnectSpotify = () => {
+    clearSpotifyAuth()
+    setSpotifyAuth(null)
+    setSpotifyPlayer(null)
+  }
+
+  const spotifyControl = async action => {
+    if (!spotifyAuth) return
+    setSpotifyBusy(true)
+    try {
+      await spotifyAction(action, spotifyAuth)
+      await refreshSpotify(true)
+    } catch (e) {
+      toast(e.message || t('Spotify control failed.'))
+    }
+    setSpotifyBusy(false)
+  }
 
   useEffect(() => {
     // The in-app updater installs an .apk, so it only applies to the native Android build.
@@ -59,6 +116,25 @@ export default function Settings() {
     if (!MOBILE) return
     isAndroid().then(ok => { setAndroid(ok); if (ok) checkForUpdate().then(setUpdateInfo).catch(() => {}) })
   }, [])
+
+  useEffect(() => {
+    let cancelled = false
+    completeSpotifyAuthIfPresent()
+      .then(auth => {
+        if (!auth || cancelled) return
+        setSpotifyAuth(auth)
+        toast(t('Spotify connected.'))
+      })
+      .catch(e => { if (!cancelled) toast(e.message || t('Spotify login failed.')) })
+    return () => { cancelled = true }
+  }, [toast])
+
+  useEffect(() => {
+    if (!spotifyAuth) return
+    refreshSpotify(true)
+    const tm = setInterval(() => refreshSpotify(true), 10000)
+    return () => clearInterval(tm)
+  }, [spotifyAuth])
 
   // The same check, on demand: the automatic one is silent when it finds nothing or cannot
   // reach gitlab.com, and a person who taps "Check for updates" deserves an answer either way.
@@ -253,6 +329,32 @@ export default function Settings() {
         <Switch checked={S.checkIn !== false} onChange={v => update(s => { s.checkIn = v })} />
       </Row>
     </Section>
+
+    {!MOBILE && <Section title={t('Music')} footer={t('Spotify supports in-app playback controls. YouTube Music opens in a new tab.')}> 
+      {!spotifyReady
+        ? <Row icon="warning" iconTint="var(--orange)" title={t('Spotify setup missing')}
+            subtitle={t('Set VITE_SPOTIFY_CLIENT_ID to enable Spotify connect on this deployment.')} />
+        : !spotifyAuth
+          ? <Row icon="link" iconTint="var(--green)" title={t('Connect Spotify')} accessory="chevron" onClick={connectSpotify}
+              subtitle={t('Log in and allow playback access to show and control your current song.')} />
+          : <>
+              <Row icon="checkCircle" iconTint="var(--green)" title={t('Spotify connected')}
+                subtitle={t('Playback control requires a Spotify Premium account and an active device.')}>
+                <button className="iconbtn" aria-label={t('Disconnect')} onClick={disconnectSpotify}><Icon name="xmark" /></button>
+              </Row>
+              <SpotifyNowPlayingCard player={spotifyPlayer} busy={spotifyBusy} />
+              <div className="lrow" style={{ gap: 8 }}>
+                <Button variant="ghost" icon="reset" onClick={() => refreshSpotify(false)} disabled={spotifyBusy}>{t('Refresh')}</Button>
+                <Button variant="ghost" icon="chevronLeft" onClick={() => spotifyControl('previous')} disabled={spotifyBusy}>{t('Previous')}</Button>
+                <Button variant="primary" icon={spotifyPlayer?.is_playing ? 'pause' : 'play'} onClick={() => spotifyControl(spotifyPlayer?.is_playing ? 'pause' : 'play')} disabled={spotifyBusy}>{spotifyPlayer?.is_playing ? t('Pause') : t('Play')}</Button>
+                <Button variant="ghost" icon="chevronRight" onClick={() => spotifyControl('next')} disabled={spotifyBusy}>{t('Next')}</Button>
+              </div>
+            </>
+      }
+      <Row icon="rocket" iconTint="var(--pink)" title={t('Open YouTube Music')} accessory="chevron"
+        subtitle={t('Quick access only — there is no official public API for full YouTube Music account control.')}
+        onClick={spotifyOpenYouTubeMusic} />
+    </Section>}
 
     {/* ---------- during a workout ---------- */}
     <Section title={t('During a workout')} footer={wakeOK ? t('The screen stays on while a workout is running, so you don’t have to unlock your phone between sets.') : null}>
@@ -514,6 +616,39 @@ function effortHelpSheet() {
     </div>
     <div style={{ height: 8 }} />
   </>)
+}
+
+function SpotifyNowPlayingCard({ player, busy }) {
+  const track = player?.item
+  const title = track?.name || t('Nothing playing right now')
+  const artists = (track?.artists || []).map(a => a.name).join(', ') || t('Open Spotify on any device and start playback.')
+  const album = track?.album?.name || ''
+  const cover = track?.album?.images?.[0]?.url || null
+  const progress = Number(player?.progress_ms || 0)
+  const duration = Number(track?.duration_ms || 0)
+  const pct = duration > 0 ? Math.max(0, Math.min(100, Math.round(progress * 100 / duration))) : 0
+  const mmss = ms => {
+    const secs = Math.max(0, Math.floor(ms / 1000))
+    const m = Math.floor(secs / 60)
+    const s = String(secs % 60).padStart(2, '0')
+    return m + ':' + s
+  }
+  return <div className="card" style={{ marginTop: 8, marginBottom: 10, padding: 12, display: 'grid', gridTemplateColumns: '64px 1fr', gap: 12 }}>
+    <div style={{ width: 64, height: 64, borderRadius: 10, overflow: 'hidden', background: 'var(--fill-2)', display: 'grid', placeItems: 'center' }}>
+      {cover ? <img src={cover} alt={t('Album cover')} style={{ width: '100%', height: '100%', objectFit: 'cover' }} /> : <Icon name="play" />}
+    </div>
+    <div style={{ minWidth: 0 }}>
+      <div style={{ fontWeight: 700, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{title}</div>
+      <div className="muted small" style={{ whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{artists}</div>
+      {album && <div className="dim small" style={{ marginTop: 2, whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis' }}>{album}</div>}
+      <div style={{ marginTop: 8, height: 4, borderRadius: 3, background: 'var(--fill-3)', overflow: 'hidden' }}>
+        <div style={{ height: '100%', width: pct + '%', background: 'var(--acc)', transition: 'width .25s' }} />
+      </div>
+      <div className="dim small" style={{ marginTop: 4 }}>
+        {duration > 0 ? mmss(progress) + ' / ' + mmss(duration) : (busy ? t('Updating…') : t('Not currently active'))}
+      </div>
+    </div>
+  </div>
 }
 
 function NotificationsCard({ S, update, toast }) {
