@@ -12,8 +12,10 @@ const indexFile = path.join(frontendDistDir, 'index.html');
 const port = Number(process.env.PORT || 3000);
 const apiPort = Number(process.env.API_PORT || 3001);
 const dataDir = process.env.DATA_DIR || path.join(__dirname, 'data');
-const apiOrigin = process.env.ORIGIN || `http://localhost:${port}`;
-const rpId = process.env.RP_ID || 'localhost';
+const railwayDomain = (process.env.RAILWAY_PUBLIC_DOMAIN || '').trim();
+const inferredOrigin = railwayDomain ? `https://${railwayDomain}` : `http://localhost:${port}`;
+const apiOrigin = process.env.ORIGIN || inferredOrigin;
+const rpId = process.env.RP_ID || railwayDomain || 'localhost';
 const mediaFallbackImgBase = process.env.MEDIA_FALLBACK_IMG_BASE || 'https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/images/';
 const mediaFallbackGifBase = process.env.MEDIA_FALLBACK_GIF_BASE || 'https://cdn.jsdelivr.net/gh/hasaneyldrm/exercises-dataset@7455efae41b330c265e7cd4b78dfa848e7ce5ebd/videos/';
 
@@ -169,7 +171,11 @@ async function proxyApi(req, res) {
   } catch (error) {
     console.error('API proxy failed:', error);
     res.writeHead(502, { 'Content-Type': 'application/json; charset=utf-8' });
-    res.end(JSON.stringify({ error: 'bad gateway' }));
+    res.end(JSON.stringify({
+      error: 'bad gateway',
+      detail: 'API backend unreachable from web process',
+      hint: 'Set ORIGIN/RP_ID (or RAILWAY_PUBLIC_DOMAIN) and verify backend startup logs'
+    }));
   }
 }
 
