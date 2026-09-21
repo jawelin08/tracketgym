@@ -84,6 +84,11 @@ function normalizeEmail(v) {
 function normalizeUsername(v) {
   return String(v || '').trim().toLowerCase();
 }
+const MEMBER_STATUSES = new Set(['lead', 'active', 'paused', 'former']);
+function memberStatusOf(v) {
+  const s = String(v || '').trim().toLowerCase();
+  return MEMBER_STATUSES.has(s) ? s : 'active';
+}
 function hashPassword(password, salt = crypto.randomBytes(16).toString('hex')) {
   const hash = crypto.scryptSync(String(password), salt, 64).toString('hex');
   return { salt, hash };
@@ -1083,6 +1088,11 @@ const routes = {
       const last = workouts[workouts.length - 1];
       return {
         id: u.id, name: u.name, created: u.created || null,
+        username: u.username || null,
+        email: u.email || null,
+        memberStatus: memberStatusOf(u.memberStatus),
+        assignedCoach: u.assignedCoach || null,
+        memberNote: u.memberNote || '',
         disabled: !!u.disabled, admin: isAdmin(u), invitedBy: u.invitedBy || null,
         workouts: workouts.length,
         lastWorkout: last ? last.d : null,
@@ -1102,12 +1112,54 @@ const routes = {
     if (!u) return json(res, 404, { error: 'no such user' });
     const S = readState(u.id) || {};
     json(res, 200, {
-      user: { id: u.id, name: u.name, created: u.created || null, disabled: !!u.disabled, admin: isAdmin(u), invitedBy: u.invitedBy || null },
+      user: {
+        id: u.id,
+        name: u.name,
+        username: u.username || null,
+        email: u.email || null,
+        memberStatus: memberStatusOf(u.memberStatus),
+        assignedCoach: u.assignedCoach || null,
+        memberNote: u.memberNote || '',
+        created: u.created || null,
+        disabled: !!u.disabled,
+        admin: isAdmin(u),
+        invitedBy: u.invitedBy || null
+      },
       unit: S.unit || 'kg',
       lastSync: S._ts || null,
       routines: (S.routines || []).map(r => ({ id: r.id, name: r.name, emoji: r.emoji, count: (r.ex || []).length })),
       bodyweight: S.bodyweight || [],
       workouts: (S.workouts || []).slice().reverse()   // newest first for display
+    });
+  },
+
+  'POST /api/admin/user/meta': async (req, res) => {
+    const admin = requireAdmin(req, res); if (!admin) return;
+    const body = await readBody(req);
+    const id = String(body.id || '');
+    const u = db.users.find(x => x.id === id);
+    if (!u) return json(res, 404, { error: 'no such user' });
+    const before = {
+      memberStatus: memberStatusOf(u.memberStatus),
+      assignedCoach: u.assignedCoach || null,
+      memberNote: u.memberNote || ''
+    };
+    u.memberStatus = memberStatusOf(body.memberStatus);
+    u.assignedCoach = String(body.assignedCoach || '').trim().slice(0, 60) || null;
+    u.memberNote = String(body.memberNote || '').trim().slice(0, 400);
+    saveDb();
+    const changed = before.memberStatus !== u.memberStatus
+      || before.assignedCoach !== u.assignedCoach
+      || before.memberNote !== u.memberNote;
+    if (changed) audit(req, 'admin.user.meta', { user: admin, target: u, msg: u.memberStatus });
+    json(res, 200, {
+      ok: true,
+      user: {
+        id: u.id,
+        memberStatus: u.memberStatus,
+        assignedCoach: u.assignedCoach,
+        memberNote: u.memberNote
+      }
     });
   },
 

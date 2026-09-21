@@ -8,7 +8,7 @@ import { auditCat, auditLine, fmtWhen } from '../lib/audit.js'
 import { workoutVolume, setsDone } from '../lib/history.js'
 import { confirmSheet } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
-import { Button } from '../components/ui.jsx'
+import { Button, TextField } from '../components/ui.jsx'
 import AdminCoach from './AdminCoach.jsx'
 import '../admin.css'
 
@@ -29,13 +29,40 @@ const rel = ts => {
   return Math.floor(s / 86400) + ' d ago'
 }
 const dur = ms => { const m = Math.max(0, Math.floor(ms / 60000)); return m < 60 ? m + ' min' : Math.floor(m / 60) + ' h ' + (m % 60) + ' min' }
+const CLIENT_STATUSES = [
+  { key: 'lead', label: 'Lead', cls: 'warn' },
+  { key: 'active', label: 'Active', cls: 'ok' },
+  { key: 'paused', label: 'Paused', cls: 'acc' },
+  { key: 'former', label: 'Former', cls: 'bad' },
+]
+const statusMeta = key => CLIENT_STATUSES.find(s => s.key === key) || CLIENT_STATUSES[1]
 
 function UserDetail({ id, onChanged, close }) {
   const [d, setD] = useState(null)
+  const [memberStatus, setMemberStatus] = useState('active')
+  const [assignedCoach, setAssignedCoach] = useState('')
+  const [memberNote, setMemberNote] = useState('')
+  const [savingMeta, setSavingMeta] = useState(false)
   const toast = useUI(s => s.toast)
   useEffect(() => { api('/api/admin/user?id=' + encodeURIComponent(id)).then(setD).catch(e => toast(e.message)) }, [id])
+  useEffect(() => {
+    if (!d?.user) return
+    setMemberStatus(d.user.memberStatus || 'active')
+    setAssignedCoach(d.user.assignedCoach || '')
+    setMemberNote(d.user.memberNote || '')
+  }, [d])
   if (!d) return <div className="muted small">Loading…</div>
   const u = d.user
+  const saveMeta = () => {
+    setSavingMeta(true)
+    api('/api/admin/user/meta', {
+      method: 'POST',
+      body: JSON.stringify({ id: u.id, memberStatus, assignedCoach, memberNote })
+    })
+      .then(() => { toast('Client profile updated'); onChanged() })
+      .catch(e => toast(e.message || 'Could not update client profile'))
+      .finally(() => setSavingMeta(false))
+  }
   const setDisabled = disabled => {
     api('/api/admin/user/disable', { method: 'POST', body: JSON.stringify({ id: u.id, disabled }) })
       .then(() => { toast(disabled ? 'User disabled' : 'User enabled'); onChanged(); close() })
@@ -46,9 +73,34 @@ function UserDetail({ id, onChanged, close }) {
     <div className="row" style={{ gap: 6, flexWrap: 'wrap', margin: '8px 0 12px' }}>
       {u.admin && <span className="adm-pill acc">admin</span>}
       {u.disabled && <span className="adm-pill bad">disabled</span>}
+      <span className={'adm-pill ' + statusMeta(u.memberStatus).cls}>{statusMeta(u.memberStatus).label}</span>
       {u.invitedBy && <span className="adm-pill">invite {u.invitedBy}</span>}
       <span className="adm-pill">joined {u.created ? fmtDate(u.created.slice(0, 10)) : '—'}</span>
     </div>
+    <div className="adm-kv">
+      <span className="k">Username</span>
+      <span className="v">{u.username || '—'}</span>
+    </div>
+    <div className="adm-kv">
+      <span className="k">Email</span>
+      <span className="v">{u.email || '—'}</span>
+    </div>
+    <h4 className="sec">Client management</h4>
+    <div className="adm-hint">Internal CRM fields for this gym: status, assigned coach and private notes.</div>
+    <div className="chips" style={{ marginBottom: 10 }}>
+      {CLIENT_STATUSES.map(s => <button key={s.key} className={'chip' + (memberStatus === s.key ? ' on' : '')}
+        onClick={() => setMemberStatus(s.key)} disabled={savingMeta}>{s.label}</button>)}
+    </div>
+    <div className="adm-field">
+      <label>Assigned coach</label>
+      <TextField value={assignedCoach} onChange={e => setAssignedCoach(e.target.value)} maxLength={60} placeholder="e.g. Marta, Javier" />
+    </div>
+    <div className="adm-field">
+      <label>Private note</label>
+      <textarea className="field" rows="3" maxLength={400} value={memberNote}
+        onChange={e => setMemberNote(e.target.value)} placeholder="Goal, injury context, schedule constraints..." />
+    </div>
+    <Button size="sm" variant="primary" onClick={saveMeta} disabled={savingMeta}>{savingMeta ? 'Saving…' : 'Save client profile'}</Button>
     <div className="tiles" style={{ textAlign: 'left' }}>
       <div className="tile"><div className="l">Workouts</div><div className="v" style={{ fontSize: '1.1rem' }}>{d.workouts.length}</div></div>
       <div className="tile"><div className="l">Weigh-ins</div><div className="v" style={{ fontSize: '1.1rem' }}>{d.bodyweight.length}</div></div>
@@ -183,6 +235,8 @@ export default function Admin() {
   const [invites, setInvites] = useState(null)
   const [inviteOnly, setInviteOnly] = useState(false)
   const [tick, setTick] = useState(0)          // the ↻ button; the activity log listens to it
+  const [query, setQuery] = useState('')
+  const [statusFilter, setStatusFilter] = useState('all')
 
   const loadUsers = () => api('/api/admin/users').then(d => { setUsers(d.users); setInviteOnly(d.invite_only) }).catch(e => toast(e.message || 'Failed to load'))
   const loadInvites = () => api('/api/admin/invites').then(d => setInvites(d.invites)).catch(() => {})
@@ -194,6 +248,14 @@ export default function Admin() {
   const liveUsers = (users || []).filter(u => u.live)
   const activeCount = (users || []).filter(u => u.lastSync && Date.now() - u.lastSync < 7 * 86400000).length
   const disabledCount = (users || []).filter(u => u.disabled).length
+  const activeMembers = (users || []).filter(u => !u.disabled && (u.memberStatus || 'active') === 'active').length
+  const leads = (users || []).filter(u => (u.memberStatus || 'active') === 'lead').length
+  const q = query.trim().toLowerCase()
+  const filteredUsers = (users || []).filter(u => {
+    if (statusFilter !== 'all' && (u.memberStatus || 'active') !== statusFilter) return false
+    if (!q) return true
+    return [u.name, u.email || '', u.username || ''].some(v => String(v).toLowerCase().includes(q))
+  })
 
   return <div className="narrow">
     <div className="hdr">
@@ -209,6 +271,8 @@ export default function Admin() {
     <div className="tiles" style={{ marginBottom: 12 }}>
       <div className="tile"><div className="l">Users</div><div className="v">{users ? users.length : '—'}</div></div>
       <div className="tile"><div className="l">Training now</div><div className="v" style={{ color: liveUsers.length ? 'var(--acc)' : undefined }}>{users ? liveUsers.length : '—'}</div></div>
+      <div className="tile"><div className="l">Active clients</div><div className="v">{users ? activeMembers : '—'}</div></div>
+      <div className="tile"><div className="l">Leads</div><div className="v">{users ? leads : '—'}</div></div>
       <div className="tile"><div className="l">Active 7 days</div><div className="v">{users ? activeCount : '—'}</div></div>
       <div className="tile"><div className="l">Disabled</div><div className="v">{users ? disabledCount : '—'}</div></div>
     </div>
@@ -231,14 +295,23 @@ export default function Admin() {
 
     <div className="card">
       <h2 style={{ margin: 0 }}>Users</h2>
-      <div className="adm-lead">Everyone with a profile on this instance. Tap one to see their activity or to disable the account — their data is never deleted from here.</div>
+      <div className="adm-lead">Everyone with a profile on this instance. Filter by client status, search by name/email, then open a profile to manage notes, coach assignment and account access.</div>
+      <div className="adm-field" style={{ marginBottom: 10 }}>
+        <TextField value={query} onChange={e => setQuery(e.target.value)} placeholder="Search by name, email or username" maxLength={80} />
+      </div>
+      <div className="chips" style={{ marginBottom: 10 }}>
+        <button className={'chip' + (statusFilter === 'all' ? ' on' : '')} onClick={() => setStatusFilter('all')}>All</button>
+        {CLIENT_STATUSES.map(s => <button key={s.key} className={'chip' + (statusFilter === s.key ? ' on' : '')}
+          onClick={() => setStatusFilter(s.key)}>{s.label}</button>)}
+      </div>
       <div className="list">
-        {(users || []).map(u => <div key={u.id} className="item" onClick={() => openUser(u.id)} style={u.disabled ? { opacity: .55 } : null}>
-          <div className="grow"><div className="tt">{u.live && <Icon name="dot" style={{ fontSize: 9, color: 'var(--green)', display: 'inline-block', marginRight: 5 }} />}{u.name} {u.admin && <span className="adm-pill acc" style={{ marginLeft: 4 }}>admin</span>}{u.disabled && <span className="adm-pill bad" style={{ marginLeft: 4 }}>disabled</span>}</div>
-            <div className="ss">{u.live ? 'training now · ' + u.live.name : u.workouts + ' workouts' + (u.lastWorkout ? ' · last ' + fmtDate(u.lastWorkout) : '') + ' · last sync ' + rel(u.lastSync)}</div></div>
+        {filteredUsers.map(u => <div key={u.id} className="item" onClick={() => openUser(u.id)} style={u.disabled ? { opacity: .55 } : null}>
+          <div className="grow"><div className="tt">{u.live && <Icon name="dot" style={{ fontSize: 9, color: 'var(--green)', display: 'inline-block', marginRight: 5 }} />}{u.name} {u.admin && <span className="adm-pill acc" style={{ marginLeft: 4 }}>admin</span>}{u.disabled && <span className="adm-pill bad" style={{ marginLeft: 4 }}>disabled</span>}<span className={'adm-pill ' + statusMeta(u.memberStatus).cls} style={{ marginLeft: 4 }}>{statusMeta(u.memberStatus).label}</span></div>
+            <div className="ss">{u.live ? 'training now · ' + u.live.name : u.workouts + ' workouts' + (u.lastWorkout ? ' · last ' + fmtDate(u.lastWorkout) : '') + ' · last sync ' + rel(u.lastSync)}{u.email ? ' · ' + u.email : ''}</div></div>
           {u.hasPush && <Icon name="bell" title="push notifications on" style={{ fontSize: 15, color: 'var(--label-3)' }} />}<Icon name="chevronRight" className="chev" />
         </div>)}
         {users && !users.length && <div className="adm-empty">No users yet.</div>}
+        {users && !!users.length && !filteredUsers.length && <div className="adm-empty">No clients match this filter.</div>}
       </div>
     </div>
 
