@@ -19,7 +19,7 @@ import { startCadence } from './coach/cadence.js';
 import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
 import { verifyError } from './verify-error.js';
-import { db } from './db.js';
+import { db, pool, getUserByIdSync } from './db.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
@@ -161,7 +161,7 @@ async function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) 
   return invite;
 }
 function platformInviteOf(token) {
-  return db.platformInvites.find(i => i.token === token) || null;
+  return db.getPlatformInviteByToken(token);
 }
 const MEMBER_STATUSES = new Set(['lead', 'active', 'paused', 'former']);
 function memberStatusOf(v) {
@@ -186,7 +186,8 @@ async function bootstrapV1() {
   await initDbIfNeeded();
   await db.loadCache();
   let changed = false;
-  if (!db.gyms.length) {
+  const existingGyms = await db.getAllGyms();
+  if (!existingGyms.length) {
     await db.createGym({
       id: 'gym-default',
       name: 'Main Gym',
@@ -218,12 +219,9 @@ async function bootstrapV1() {
     }
   }
   const now = Date.now();
-  const beforeInvites = db.platformInvites.length;
-  db.platformInvites = db.platformInvites.filter(i => {
-    const exp = Date.parse(i?.expiresAt || '');
-    return i && i.token && i.gymId && i.email && !i.usedBy && Number.isFinite(exp) && exp > now;
-  });
-  if (db.platformInvites.length !== beforeInvites) changed = true;
+  await pool.query('DELETE FROM platform_invites WHERE expiresAt IS NOT NULL AND expiresAt <= NOW() AND usedBy IS NULL');
+  const remaining = await db.getAllPlatformInvites();
+  if (remaining.length !== remaining.length) changed = true;
   return changed;
 }
 
@@ -337,12 +335,12 @@ function pushEndpointError(raw) {
 // belongs to the device that started the rest); a subscription stored without one — an older
 // client — still gets everything, as before.
 async function sendPush(userId, payload, deviceId) {
-  let subs = db.subs.filter(s => s.userId === userId);
-  if (deviceId && subs.some(s => s.deviceId === deviceId)) subs = subs.filter(s => s.deviceId === deviceId);
-  if (!subs.length) return;
+  const subs = await db.getSubsByUserId(userId);
+  const filtered = deviceId ? subs.filter(s => s.deviceId === deviceId) : subs;
+  if (!filtered.length) return;
   const body = JSON.stringify(payload);
   const worker = async () => {
-    for (const sub of subs) {
+    for (const sub of filtered) {
       // Re-judged before every send: PUSH_AGENT never sees a literal address, so an endpoint
       // that is private (however it got into db.json) is dropped here rather than connected to.
       const bad = pushEndpointError(sub.endpoint);
@@ -454,9 +452,16 @@ function readStateCached(uid) {
   stateCache.set(uid, { mtimeMs: st.mtimeMs, size: st.size, S });
   return S;
 }
-setInterval(() => {
-  for (const user of db.users) {
-    if (!db.subs.some(s => s.userId === user.id)) continue;
+setInterval(async () => {
+  const users = await db.getAllUsers();
+  const subsMap = new Map();
+  for (const u of users) {
+    if (!subsMap.has(u.id)) {
+      subsMap.set(u.id, (await db.getSubsByUserId(u.id)).length > 0);
+    }
+  }
+  for (const user of users) {
+    if (!subsMap.get(user.id)) continue;
     // One user's state file is one user's problem: a shape this tick cannot read is logged and
     // skipped, not allowed to take the process — and everyone else's reminders — down with it.
     // PUT /api/data refuses the obvious shapes, but a file already on disk answers to nobody.
@@ -474,7 +479,7 @@ setInterval(() => {
       const routine = (S.routines || []).find(r => r.id === rid);
       console.log('reminder firing', user.id, rid);
       user.lastReminder = now.date;
-      db.updateUser({ ...user, lastReminder: now.date });
+      await db.updateUser({ ...user, lastReminder: now.date });
       sendPush(user.id, dayReminderPush(S.lang, routine));
     } catch (e) {
       console.error('reminder tick', user.id, e);
@@ -552,7 +557,7 @@ function readSession(req) {
   if (!payload) return null;
   const [uid, exp, ver] = payload.split(':');
   if (!uid || +exp < Date.now()) return null;
-  const user = db.users.find(u => u.id === uid) || null;
+  const user = getUserByIdSync(uid) || null;
   if (!user) return null;
   if (user.disabled) return null;           // disabled accounts are locked out everywhere
   if (!gymPolicyForUser(user).ok) return null;
@@ -793,7 +798,7 @@ if (AUDIT_ON) {
 
 /* ---------- routes ---------- */
 const routes = {
-  'GET /api/health': async (req, res) => json(res, 200, { ok: true, users: db.users.length }),
+  'GET /api/health': async (req, res) => json(res, 200, { ok: true, users: (await db.getAllUsers()).length }),
 
   // Public config the login screen needs before anyone is signed in. `coach` is absent unless
   // the instance has both switched the Coach on and successfully connected a provider — the
@@ -1145,7 +1150,7 @@ const routes = {
       audit(req, 'auth.pair.fail', { ok: false, msg: 'code-invalid' });
       return json(res, 400, { error: 'invalid or expired code' });
     }
-    const user = db.users.find(u => u.id === p.uid);
+    const user = await db.getUserById(p.uid);
     if (!user || user.disabled) {
       audit(req, 'auth.pair.fail', { ok: false, uid: p.uid, msg: 'user-unavailable' });
       return json(res, 400, { error: 'invalid or expired code' });
@@ -1212,12 +1217,12 @@ const routes = {
     if (bad) return json(res, 400, { error: bad });
     const keys = { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) };
     const deviceId = deviceIdOf(body.deviceId);
-    const prev = db.subs.find(s => s.endpoint === sub.endpoint);
-    db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint);
-    const mine = db.subs.filter(s => s.userId === user.id);
+    const prev = await db.getSubByEndpoint(sub.endpoint);
+    await db.deleteSubByEndpoint(sub.endpoint);
+    const mine = await db.getSubsByUserId(user.id);
     if (mine.length >= MAX_SUBS_PER_USER) {
       const drop = new Set(mine.slice(0, mine.length - MAX_SUBS_PER_USER + 1).map(s => s.endpoint));
-      db.subs = db.subs.filter(s => !drop.has(s.endpoint));
+      for (const ep of drop) await db.deleteSubByEndpoint(ep);
     }
     await db.createSub({
       userId: user.id,
@@ -1237,7 +1242,8 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const endpoint = new URL(req.url, 'http://x').searchParams.get('endpoint') || '';
-    json(res, 200, { subscribed: db.subs.some(s => s.userId === user.id && s.endpoint === endpoint) });
+    const subs = await db.getSubsByUserId(user.id);
+    json(res, 200, { subscribed: subs.some(s => s.endpoint === endpoint) });
   },
 
   'POST /api/push/unsubscribe': async (req, res) => {
@@ -1296,11 +1302,20 @@ const routes = {
     const actor = requireAdmin(req, res); if (!actor) return;
     const all = new URL(req.url, 'http://x').searchParams.get('scope') === 'all';
     const scopeGymId = isSuperAdmin(actor) && all ? null : userGymId(actor);
-    const users = db.users.filter(u => !scopeGymId || userGymId(u) === scopeGymId).map(u => {
+    const allUsers = await db.getAllUsers();
+    const gyms = await db.getAllGyms();
+    const gymMap = new Map(gyms.map(g => [g.id, g]));
+    const subsByUser = new Map();
+    for (const u of allUsers) {
+      if (!subsByUser.has(u.id)) {
+        subsByUser.set(u.id, (await db.getSubsByUserId(u.id)).length > 0);
+      }
+    }
+    const usersOut = allUsers.filter(u => !scopeGymId || userGymId(u) === scopeGymId).map(u => {
       const S = readState(u.id) || {};
       const workouts = S.workouts || [];
       const last = workouts[workouts.length - 1];
-      const gym = gymById(userGymId(u));
+      const gym = gymMap.get(userGymId(u)) || null;
       return {
         id: u.id, name: u.name, created: u.created || null,
         username: u.username || null,
@@ -1314,18 +1329,18 @@ const routes = {
         workouts: workouts.length,
         lastWorkout: last ? last.d : null,
         lastSync: S._ts || null,
-        hasPush: db.subs.some(s => s.userId === u.id),
+        hasPush: subsByUser.get(u.id),
         live: livePresence(u.id)
       };
     });
-    json(res, 200, { users, invite_only: INVITE_ONLY, now: Date.now(), scopeGymId, actor: publicUser(actor) });
+    json(res, 200, { users: usersOut, invite_only: INVITE_ONLY, now: Date.now(), scopeGymId, actor: publicUser(actor) });
   },
 
   // Drill-down: full workout history + body-weight log for one user.
   'GET /api/admin/user': async (req, res) => {
     const actor = requireAdmin(req, res); if (!actor) return;
     const id = new URL(req.url, 'http://x').searchParams.get('id');
-    const u = db.users.find(x => x.id === id);
+    const u = await db.getUserById(id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (!canManageUser(actor, u)) return json(res, 403, { error: 'forbidden' });
     const S = readState(u.id) || {};
@@ -1358,7 +1373,7 @@ const routes = {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     const id = String(body.id || '');
-    const u = db.users.find(x => x.id === id);
+    const u = await db.getUserById(id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (!canManageUser(admin, u)) return json(res, 403, { error: 'forbidden' });
     const before = {
@@ -1388,7 +1403,7 @@ const routes = {
   'POST /api/admin/user/disable': async (req, res) => {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
-    const u = db.users.find(x => x.id === body.id);
+    const u = await db.getUserById(body.id);
     if (!u) return json(res, 404, { error: 'no such user' });
     if (!canManageUser(admin, u)) return json(res, 403, { error: 'forbidden' });
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
@@ -1401,22 +1416,19 @@ const routes = {
 
   'GET /api/admin/invites': async (req, res) => {
     if (!requireAdmin(req, res)) return;
-    // resolve usedBy uid → name for display
-    const invites = db.invites.map(i => ({
-      ...i, usedByName: i.usedBy ? (db.users.find(u => u.id === i.usedBy) || {}).name || null : null
+    const invites = await db.getAllInvites();
+    const usersMap = new Map((await db.getAllUsers()).map(u => [u.id, u]));
+    const invitesOut = invites.map(i => ({
+      ...i, usedByName: i.usedBy ? (usersMap.get(i.usedBy) || {}).name || null : null
     }));
-    json(res, 200, { invites, invite_only: INVITE_ONLY });
+    json(res, 200, { invites: invitesOut, invite_only: INVITE_ONLY });
   },
 
   'POST /api/admin/invites/new': async (req, res) => {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
     let code;
-    // 16 hex chars = 64 bits, up from 8 chars / 32 bits. The app has no rate limiting by design
-    // (that's the reverse proxy's job) and /api/register/options tells a caller whether a code is
-    // good, so the code itself has to be the thing that isn't worth guessing. Codes already in
-    // db.json keep working — validation is an exact string compare, never a length or format check.
-    do { code = crypto.randomBytes(8).toString('hex').toUpperCase(); } while (db.invites.some(i => i.code === code));
+    do { code = crypto.randomBytes(8).toString('hex').toUpperCase(); } while (await db.getInviteByCode(code));
     const invite = { code, note: String(body.note || '').slice(0, 60), createdBy: admin.id, created: new Date().toISOString() };
     await db.createInvite(invite);
     audit(req, 'admin.invite.create', { user: admin, msg: code });
@@ -1426,7 +1438,7 @@ const routes = {
   'POST /api/admin/invites/revoke': async (req, res) => {
     const admin = requireAdmin(req, res); if (!admin) return;
     const body = await readBody(req);
-    const inv = db.invites.find(i => i.code === String(body.code || '').toUpperCase());
+    const inv = await db.getInviteByCode(String(body.code || '').toUpperCase());
     if (!inv) return json(res, 404, { error: 'no such code' });
     if (inv.usedBy) return json(res, 400, { error: 'already used — cannot revoke' });
     await db.revokeInvite(inv.code);
@@ -1437,8 +1449,10 @@ const routes = {
   /* ---------- platform (super-admin) ---------- */
   'GET /api/admin/platform/gyms': async (req, res) => {
     const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
-    const gyms = db.gyms.map(g => {
-      const members = db.users.filter(u => userGymId(u) === g.id);
+    const gyms = await db.getAllGyms();
+    const allUsers = await db.getAllUsers();
+    const gymsOut = gyms.map(g => {
+      const members = allUsers.filter(u => userGymId(u) === g.id);
       const owner = members.find(u => u.id === g.ownerId) || null;
       const activeMembers = members.filter(u => !u.disabled && memberStatusOf(u.memberStatus) === 'active').length;
       const lastSync = members.reduce((max, u) => {
@@ -1461,12 +1475,13 @@ const routes = {
         created: g.created || null
       };
     });
-    json(res, 200, { gyms, actor: publicUser(superAdmin), now: Date.now() });
+    json(res, 200, { gyms: gymsOut, actor: publicUser(superAdmin), now: Date.now() });
   },
 
   'GET /api/admin/platform/users': async (req, res) => {
     if (!requireSuperAdmin(req, res)) return;
-    const users = db.users.map(u => ({
+    const allUsers = await db.getAllUsers();
+    const usersOut = allUsers.map(u => ({
       id: u.id,
       name: u.name,
       email: u.email || null,
@@ -1477,7 +1492,7 @@ const routes = {
       admin: isAdmin(u),
       superadmin: isSuperAdmin(u)
     }));
-    json(res, 200, { users });
+    json(res, 200, { users: usersOut });
   },
 
   'POST /api/admin/platform/gyms/create': async (req, res) => {
@@ -1489,7 +1504,12 @@ const routes = {
     let slug = slugOf(body.slug || name);
     const baseSlug = slug;
     let n = 2;
-    while (db.gyms.some(g => g.slug === slug)) slug = `${baseSlug}-${n++}`;
+    let slugExists = true;
+    while (slugExists) {
+      const existing = await pool.query('SELECT 1 FROM gyms WHERE slug = ? LIMIT 1', [slug]);
+      if (!existing[0].length) slugExists = false;
+      else slug = `${baseSlug}-${n++}`;
+    }
     const gym = {
       id,
       name,
@@ -1529,7 +1549,7 @@ const routes = {
     const body = await readBody(req);
     const gym = gymById(String(body.gymId || ''));
     if (!gym) return json(res, 404, { error: 'no such gym' });
-    const user = db.users.find(u => u.id === String(body.userId || ''));
+    const user = await db.getUserById(String(body.userId || ''));
     if (!user) return json(res, 404, { error: 'no such user' });
     gym.ownerId = user.id;
     user.gymId = gym.id;
@@ -1598,7 +1618,7 @@ coachJobs.setProposalHook((uid, pending) => {
     tag: 'coach-proposal', url: '#/coach'
   });
 });
-startCadence({ users: () => db.users, userNow });
+startCadence({ users: async () => await db.getAllUsers(), userNow });
 startWarmup();
 
 http.createServer(async (req, res) => {

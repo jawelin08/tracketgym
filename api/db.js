@@ -182,9 +182,9 @@ async function migrateFromDbJson(dbJson) {
 }
 
 /* ---------- user operations ---------- */
-async function getUserById(id) {
-  const [[row]] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
-  return row || null;
+function getUserByIdSync(id) {
+  const user = users.find(u => u.id === id);
+  return user || null;
 }
 
 async function getUserByEmail(email) {
@@ -313,6 +313,11 @@ async function getAllGyms() {
   return rows || [];
 }
 
+async function getAllInvites() {
+  const [rows] = await pool.query('SELECT * FROM invites');
+  return rows || [];
+}
+
 async function createGym(gym) {
   await pool.query(
     `INSERT INTO gyms (id, name, slug, status, plan, seats, ownerId, note, licenseExpiresAt, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -352,13 +357,23 @@ async function deleteSubByEndpoint(endpoint) {
   subs = subs.filter(s => s.endpoint !== endpoint);
 }
 
+async function getSubsByUserId(userId) {
+  const [rows] = await pool.query('SELECT * FROM subscriptions WHERE userId = ?', [userId]);
+  return rows || [];
+}
+
 async function removeSub(sub) {
   await pool.query('DELETE FROM subscriptions WHERE id = ?', [sub.id]);
   subs = subs.filter(s => s.id !== sub.id);
 }
 
+async function getAllPlatformInvites() {
+  const [rows] = await pool.query('SELECT * FROM platform_invites');
+  return rows || [];
+}
+
 /* ---------- db object: legacy array access + all functions ---------- */
-export const db = {
+const db = {
   get users() { return users; },
   set users(v) { users = v; },
   get creds() { return creds; },
@@ -395,13 +410,19 @@ export const db = {
   usePlatformInvite,
   getGymById,
   getAllGyms,
+  getAllInvites,
   createGym,
   updateGym,
   getSubByEndpoint,
   createSub,
   deleteSubByEndpoint,
-  removeSub
+  removeSub,
+  getSubsByUserId,
+  getAllPlatformInvites,
+  getAllInvites
 };
+
+export { db, pool, getUserByIdSync };
 
 /* ---------- auto-init on import ---------- */
 Promise.resolve().then(() => {
