@@ -21,300 +21,6 @@ import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
 import { verifyError } from './verify-error.js';
 import * as db from './db.js';
 
-/* ---------- MySQL connection pool ---------- */
-import mysql from 'mysql2/promise';
-
-const pool = mysql.createPool({
-  host: process.env.DB_HOST || 'localhost',
-  port: process.env.DB_PORT || 3306,
-  user: process.env.DB_USER || 'root',
-  password: process.env.DB_PASSWORD || '',
-  database: process.env.DB_NAME || 'tracketgym',
-  waitForConnections: true,
-  connectionLimit: 10,
-  queueLimit: 0
-});
-
-// Initialize database schema on startup
-async function initDb() {
-  const conn = await pool.getConnection();
-  try {
-    // Create users table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS users (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(100),
-        username VARCHAR(100),
-        email VARCHAR(255),
-        usernameLower VARCHAR(100),
-        emailLower VARCHAR(255),
-        passwordSalt VARCHAR(255),
-        passwordHash VARCHAR(255),
-        gymId VARCHAR(50),
-        admin BOOLEAN DEFAULT FALSE,
-        superadmin BOOLEAN DEFAULT FALSE,
-        disabled BOOLEAN DEFAULT FALSE,
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        invitedBy VARCHAR(100),
-        sv INT DEFAULT 0,
-        lastReminder DATE,
-        UNIQUE KEY unique_username (username),
-        UNIQUE KEY unique_email (email),
-        INDEX idx_emailLower (emailLower),
-        INDEX idx_usernameLower (usernameLower),
-        INDEX idx_gymId (gymId)
-      )
-    `);
-
-    // Create credentials table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS credentials (
-        id VARCHAR(255) PRIMARY KEY,
-        userId VARCHAR(50),
-        publicKey LONGTEXT,
-        counter INT,
-        transports JSON,
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Create subscriptions table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS subscriptions (
-        id VARCHAR(100) PRIMARY KEY,
-        userId VARCHAR(50),
-        endpoint TEXT,
-        auth VARCHAR(255),
-        p256dh VARCHAR(255),
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
-      )
-    `);
-
-    // Create invites table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS invites (
-        code VARCHAR(50) PRIMARY KEY,
-        createdBy VARCHAR(50),
-        usedBy VARCHAR(50),
-        usedAt TIMESTAMP,
-        revoked BOOLEAN DEFAULT FALSE,
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create gyms table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS gyms (
-        id VARCHAR(50) PRIMARY KEY,
-        name VARCHAR(100),
-        slug VARCHAR(100),
-        status VARCHAR(50),
-        plan VARCHAR(50),
-        seats INT,
-        ownerId VARCHAR(50),
-        note TEXT,
-        licenseExpiresAt TIMESTAMP,
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    // Create platform_invites table
-    await conn.query(`
-      CREATE TABLE IF NOT EXISTS platform_invites (
-        token VARCHAR(100) PRIMARY KEY,
-        gymId VARCHAR(50),
-        email VARCHAR(255),
-        role VARCHAR(50),
-        name VARCHAR(100),
-        usedBy VARCHAR(50),
-        usedAt TIMESTAMP,
-        expiresAt TIMESTAMP,
-        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-      )
-    `);
-
-    console.log('Database schema initialized');
-  } finally {
-    conn.release();
-  }
-}
-
-// Migrate existing data from db.json to MySQL
-async function migrateDb() {
-  const conn = await pool.getConnection();
-  try {
-    // Migrate users
-    for (const user of (db.users || [])) {
-      const created = user.created ? new Date(user.created) : new Date();
-      await conn.query(
-        `INSERT IGNORE INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, superadmin, disabled, created, invitedBy, sv, lastReminder)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          user.id, user.name, user.username, user.email,
-          user.usernameLower, user.emailLower,
-          user.passwordSalt, user.passwordHash,
-          user.gymId, user.admin ? 1 : 0, user.superadmin ? 1 : 0, user.disabled ? 1 : 0,
-          created, user.invitedBy, user.sv || 0, user.lastReminder || null
-        ]
-      );
-    }
-
-    // Migrate credentials
-    for (const cred of (db.creds || [])) {
-      const created = cred.created ? new Date(cred.created) : new Date();
-      await conn.query(
-        `INSERT IGNORE INTO credentials (id, userId, publicKey, counter, transports, created)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          cred.id, cred.userId, cred.publicKey,
-          cred.counter || 0,
-          JSON.stringify(cred.transports || []),
-          created
-        ]
-      );
-    }
-
-    // Migrate subscriptions
-    for (const sub of (db.subs || [])) {
-      const created = sub.created ? new Date(sub.created) : new Date();
-      await conn.query(
-        `INSERT IGNORE INTO subscriptions (id, userId, endpoint, auth, p256dh, created)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          sub.id || crypto.randomBytes(12).toString('base64url'),
-          sub.userId, sub.endpoint, sub.auth, sub.p256dh,
-          created
-        ]
-      );
-    }
-
-    // Migrate invites
-    for (const invite of (db.invites || [])) {
-      const created = invite.created ? new Date(invite.created) : new Date();
-      const usedAt = invite.usedAt ? new Date(invite.usedAt) : null;
-      await conn.query(
-        `INSERT IGNORE INTO invites (code, createdBy, usedBy, usedAt, revoked, created)
-         VALUES (?, ?, ?, ?, ?, ?)`,
-        [
-          invite.code, invite.createdBy, invite.usedBy,
-          usedAt, invite.revoked ? 1 : 0, created
-        ]
-      );
-    }
-
-    // Migrate gyms
-    for (const gym of (db.gyms || [])) {
-      const created = gym.created ? new Date(gym.created) : new Date();
-      const licenseExpiresAt = gym.licenseExpiresAt ? new Date(gym.licenseExpiresAt) : null;
-      await conn.query(
-        `INSERT IGNORE INTO gyms (id, name, slug, status, plan, seats, ownerId, note, licenseExpiresAt, created)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          gym.id, gym.name, gym.slug, gym.status, gym.plan, gym.seats,
-          gym.ownerId, gym.note, licenseExpiresAt, created
-        ]
-      );
-    }
-
-    // Migrate platform invites
-    for (const invite of (db.platformInvites || [])) {
-      const created = invite.created ? new Date(invite.created) : new Date();
-      const expiresAt = invite.expiresAt ? new Date(invite.expiresAt) : new Date();
-      const usedAt = invite.usedAt ? new Date(invite.usedAt) : null;
-      await conn.query(
-        `INSERT IGNORE INTO platform_invites (token, gymId, email, role, name, usedBy, usedAt, expiresAt, created)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [
-          invite.token, invite.gymId, invite.email, invite.role,
-          invite.name, invite.usedBy, usedAt, expiresAt, created
-        ]
-      );
-    }
-
-    console.log('Database migration completed');
-  } finally {
-    conn.release();
-  }
-}
-
-// Helper functions for database operations
-async function getUserById(uid) {
-  const [[user]] = await pool.query('SELECT * FROM users WHERE id = ?', [uid]);
-  return user || null;
-}
-
-async function getUserByEmail(email) {
-  const [[user]] = await pool.query('SELECT * FROM users WHERE emailLower = ?', [normalizeEmail(email)]);
-  return user || null;
-}
-
-async function getUserByUsername(username) {
-  const [[user]] = await pool.query('SELECT * FROM users WHERE usernameLower = ?', [normalizeUsername(username)]);
-  return user || null;
-}
-
-async function getAllUsers() {
-  const [users] = await pool.query('SELECT * FROM users');
-  return users;
-}
-
-async function createUser(user) {
-  const created = user.created ? new Date(user.created) : new Date();
-  await pool.query(
-    `INSERT INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, disabled, created, invitedBy, sv)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-    [
-      user.id, user.name, user.username, user.email,
-      user.usernameLower, user.emailLower,
-      user.passwordSalt, user.passwordHash,
-      user.gymId, user.admin ? 1 : 0, user.disabled ? 1 : 0,
-      created, user.invitedBy, user.sv || 0
-    ]
-  );
-  return user;
-}
-
-async function updateUser(user) {
-  await pool.query(
-    `UPDATE users SET name = ?, username = ?, email = ?, usernameLower = ?, emailLower = ?, passwordSalt = ?, passwordHash = ?, gymId = ?, admin = ?, disabled = ?, invitedBy = ?, sv = ?, lastReminder = ? WHERE id = ?`,
-    [
-      user.name, user.username, user.email,
-      user.usernameLower, user.emailLower,
-      user.passwordSalt, user.passwordHash,
-      user.gymId, user.admin ? 1 : 0, user.disabled ? 1 : 0,
-      user.invitedBy, user.sv || 0, user.lastReminder, user.id
-    ]
-  );
-}
-
-async function addCredential(cred) {
-  const created = cred.created ? new Date(cred.created) : new Date();
-  await pool.query(
-    `INSERT INTO credentials (id, userId, publicKey, counter, transports, created)
-     VALUES (?, ?, ?, ?, ?, ?)`,
-    [
-      cred.id, cred.userId, cred.publicKey,
-      cred.counter || 0, JSON.stringify(cred.transports || []), created
-    ]
-  );
-}
-
-async function getCredentialById(id) {
-  const [[cred]] = await pool.query('SELECT * FROM credentials WHERE id = ?', [id]);
-  return cred || null;
-}
-
-async function getAllCredentials() {
-  const [creds] = await pool.query('SELECT * FROM credentials');
-  return creds;
-}
-
-async function updateCredentialCounter(id, counter) {
-  await pool.query('UPDATE credentials SET counter = ? WHERE id = ?', [counter, id]);
-}
-
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
 const RP_ID = process.env.RP_ID || 'localhost';
@@ -439,7 +145,7 @@ function gymAccessPolicy(gym) {
 function gymPolicyForUser(user) {
   return gymAccessPolicy(gymById(userGymId(user)));
 }
-function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) {
+async function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) {
   const token = crypto.randomBytes(24).toString('base64url');
   const invite = {
     token,
@@ -451,7 +157,7 @@ function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) {
     expiresAt: new Date(Date.now() + 7 * 86400000).toISOString(),
     usedBy: null
   };
-  db.platformInvites.push(invite);
+  await db.createPlatformInvite(invite);
   return invite;
 }
 function platformInviteOf(token) {
@@ -476,11 +182,12 @@ function readState(uid) {
   try { return JSON.parse(fs.readFileSync(stateFile(uid), 'utf8')); } catch { return null; }
 }
 
-// v1 multi-gym bootstrap: existing installs get one default gym and all users attached to it.
-{
+async function bootstrapV1() {
+  await initDbIfNeeded();
+  await loadCache();
   let changed = false;
   if (!db.gyms.length) {
-    db.gyms.push({
+    await db.createGym({
       id: 'gym-default',
       name: 'Main Gym',
       slug: 'main-gym',
@@ -493,25 +200,22 @@ function readState(uid) {
     });
     changed = true;
   }
-  for (const g of db.gyms) {
+  const allGyms = await db.getAllGyms();
+  for (const g of allGyms) {
     const status = gymStatusOf(g.status);
     const plan = gymPlanOf(g.plan);
     const seats = Math.max(1, Math.min(50000, +g.seats || 500));
     const slug = slugOf(g.slug || g.name || 'gym');
     if (g.status !== status || g.plan !== plan || g.seats !== seats || g.slug !== slug) changed = true;
-    g.status = status;
-    g.plan = plan;
-    g.seats = seats;
-    g.slug = slug;
-    g.note = String(g.note || '').slice(0, 240);
-    if (g.licenseExpiresAt != null) {
-      const d = new Date(g.licenseExpiresAt);
-      g.licenseExpiresAt = Number.isFinite(d.getTime()) ? d.toISOString() : null;
-    } else g.licenseExpiresAt = null;
+    await db.updateGym(g.id, { status, plan, seats, slug, note: String(g.note || '').slice(0, 240), licenseExpiresAt: g.licenseExpiresAt });
   }
-  const def = defaultGymId();
-  for (const u of db.users) {
-    if (!u.gymId || !gymById(u.gymId)) { u.gymId = def; changed = true; }
+  const def = await defaultGymId();
+  const allUsers = await db.getAllUsers();
+  for (const u of allUsers) {
+    if (!u.gymId || !await db.getGymById(u.gymId)) {
+      await db.updateUser({ ...u, gymId: def });
+      changed = true;
+    }
   }
   const now = Date.now();
   const beforeInvites = db.platformInvites.length;
@@ -520,8 +224,11 @@ function readState(uid) {
     return i && i.token && i.gymId && i.email && !i.usedBy && Number.isFinite(exp) && exp > now;
   });
   if (db.platformInvites.length !== beforeInvites) changed = true;
-  if (changed) saveDb();
+  return changed;
 }
+
+// run bootstrap once on startup
+bootstrapV1().catch(console.error);
 
 /* ---------- push notifications (Web Push / VAPID) ---------- */
 const vapidFile = path.join(DATA, 'vapid.json');
@@ -634,17 +341,14 @@ async function sendPush(userId, payload, deviceId) {
   if (deviceId && subs.some(s => s.deviceId === deviceId)) subs = subs.filter(s => s.deviceId === deviceId);
   if (!subs.length) return;
   const body = JSON.stringify(payload);
-  let dirty = false;
-  let next = 0;
   const worker = async () => {
-    while (next < subs.length) {
-      const sub = subs[next++];
+    for (const sub of subs) {
       // Re-judged before every send: PUSH_AGENT never sees a literal address, so an endpoint
       // that is private (however it got into db.json) is dropped here rather than connected to.
       const bad = pushEndpointError(sub.endpoint);
       if (bad) {
         console.error('push endpoint refused', userId, bad);
-        db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint); dirty = true;
+        await db.removeSub(sub.endpoint);
         continue;
       }
       // urgency 'high' is the one lever we have over delivery speed — iOS/Android throttle
@@ -662,13 +366,12 @@ async function sendPush(userId, payload, deviceId) {
         // regenerated). Neither will ever deliver again; keeping them only hides the fact from the
         // Settings toggle, which reads the browser's side. The client re-subscribes on its next boot.
         if (e.statusCode === 404 || e.statusCode === 410 || e.statusCode === 403) {
-          db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint); dirty = true;
+          await db.removeSub(sub.endpoint);
         }
       }
     }
   };
   await Promise.all(Array.from({ length: Math.min(PUSH_CONCURRENCY, subs.length) }, worker));
-  if (dirty) saveDb();
 }
 
 // Rest-timer alerts: client schedules on start/extend, cancels on skip or on-screen completion —
@@ -771,7 +474,7 @@ setInterval(() => {
       const routine = (S.routines || []).find(r => r.id === rid);
       console.log('reminder firing', user.id, rid);
       user.lastReminder = now.date;
-      saveDb();
+      db.updateUser({ ...user, lastReminder: now.date });
       sendPush(user.id, dayReminderPush(S.lang, routine));
     } catch (e) {
       console.error('reminder tick', user.id, e);
@@ -1127,6 +830,8 @@ const routes = {
   },
 
   'POST /api/auth/register': async (req, res) => {
+    await initDbIfNeeded();
+    await loadCache();
     const body = await readBody(req);
     const email = normalizeEmail(body.email);
     const username = String(body.username || '').trim().slice(0, 40);
@@ -1147,21 +852,24 @@ const routes = {
     }
 
     const code = String(body.code || '').trim().toUpperCase();
-    if (INVITE_ONLY && !db.invites.some(i => i.code === code && !i.usedBy && !i.revoked)) {
-      audit(req, 'auth.password.register.denied', { ok: false, name: username, msg: 'invite-rejected' });
-      return json(res, 403, { error: 'a valid invite code is required' });
+    if (INVITE_ONLY) {
+      const invite = await db.getInviteByCode(code);
+      if (!invite || invite.usedBy || invite.revoked) {
+        audit(req, 'auth.password.register.denied', { ok: false, name: username, msg: 'invite-rejected' });
+        return json(res, 403, { error: 'a valid invite code is required' });
+      }
     }
 
-    if (db.users.some(u => normalizeEmail(u.email) === email)) return json(res, 409, { error: 'email already in use' });
-    if (db.users.some(u => normalizeUsername(u.username || u.name) === usernameLower)) return json(res, 409, { error: 'username already in use' });
+    if (await db.getUserByEmail(email)) return json(res, 409, { error: 'email already in use' });
+    if (await db.getUserByUsername(username)) return json(res, 409, { error: 'username already in use' });
 
     const uid = crypto.randomBytes(12).toString('base64url');
     const { salt, hash } = hashPassword(password);
-    const gym = gymById(platformInvite?.gymId || defaultGymId());
+    const gym = await gymById(platformInvite?.gymId || defaultGymId());
     if (!gym) return json(res, 500, { error: 'gym not configured' });
     const gymPolicy = gymAccessPolicy(gym);
     if (!gymPolicy.ok) return json(res, 403, { error: gymPolicy.error });
-    if (gymSeatsUsed(gym.id) >= Math.max(1, +gym.seats || 1)) return json(res, 403, { error: 'seat limit reached for this gym' });
+    if (await gymSeatsUsed(gym.id) >= Math.max(1, +gym.seats || 1)) return json(res, 403, { error: 'seat limit reached for this gym' });
     const user = {
       id: uid,
       name: username,
@@ -1176,41 +884,43 @@ const routes = {
     };
 
     if (INVITE_ONLY) {
-      const invite = db.invites.find(i => i.code === code && !i.usedBy && !i.revoked);
+      const invite = await db.getInviteByCode(code);
       if (!invite) return json(res, 403, { error: 'invite code is no longer valid — ask for a new one' });
-      invite.usedBy = user.id;
-      invite.usedAt = user.created;
+      await db.useInvite(code, user.id);
       user.invitedBy = invite.code;
     }
 
     if (platformInvite) {
-      platformInvite.usedBy = user.id;
-      platformInvite.usedAt = user.created;
-      platformInvite.role = platformInvite.role || 'owner';
+      await db.usePlatformInvite(platformInvite.token, user.id);
       if (platformInvite.role === 'owner') {
         user.admin = true;
-        gym.ownerId = user.id;
+        await db.updateGym(gym.id, { ownerId: user.id });
       }
     }
 
-    db.users.push(user);
-    saveDb();
+    await db.createUser(user);
     // First user becomes admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
-    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
-      user.admin = true;
-      saveDb();
+    if (!ADMIN_UIDS.length) {
+      const allUsers = await db.getAllUsers();
+      if (!allUsers.some(u => u.admin)) {
+        user.admin = true;
+        await db.updateUser(user);
+      }
     }
     audit(req, 'auth.password.register.ok', { user });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: await publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/auth/login': async (req, res) => {
+    await initDbIfNeeded();
+    await loadCache();
     const body = await readBody(req);
     const identifier = String(body.identifier || '').trim().toLowerCase();
     const password = String(body.password || '');
     if (!identifier || !password) return json(res, 400, { error: 'identifier and password required' });
 
-    const user = db.users.find(u => (normalizeEmail(u.email) === identifier) || (normalizeUsername(u.username || u.name) === identifier));
+    let user = await db.getUserByEmail(identifier);
+    if (!user) user = await db.getUserByUsername(identifier);
     if (!user || !user.passwordHash || !user.passwordSalt) {
       audit(req, 'auth.password.login.fail', { ok: false, msg: 'unknown-user' });
       return json(res, 401, { error: 'invalid credentials' });
@@ -1226,22 +936,29 @@ const routes = {
 
     audit(req, 'auth.password.login.ok', { user });
     // Promote first user to admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
-    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
-      user.admin = true;
-      saveDb();
+    if (!ADMIN_UIDS.length) {
+      const allUsers = await db.getAllUsers();
+      if (!allUsers.some(u => u.admin)) {
+        user.admin = true;
+        await db.updateUser(user);
+      }
     }
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: await publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/register/options': async (req, res) => {
+    await initDbIfNeeded();
+    await loadCache();
     const body = await readBody(req);
     const name = String(body.name || '').trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required' });
     const code = String(body.code || '').trim().toUpperCase();
-    if (INVITE_ONLY && !db.invites.some(i => i.code === code && !i.usedBy && !i.revoked)) {
-      // The rejected code itself is never recorded — a near-miss guess in the log is a liability.
-      audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
-      return json(res, 403, { error: 'a valid invite code is required' });
+    if (INVITE_ONLY) {
+      const invite = await db.getInviteByCode(code);
+      if (!invite || invite.usedBy || invite.revoked) {
+        audit(req, 'auth.register.denied', { ok: false, name, msg: 'invite-rejected' });
+        return json(res, 403, { error: 'a valid invite code is required' });
+      }
     }
     const uid = crypto.randomBytes(12).toString('base64url');
     const options = await generateRegistrationOptions({
@@ -1401,7 +1118,7 @@ const routes = {
     user.sv = sessionVersion(user) + 1;
     // An unredeemed pairing code is a session-in-waiting for this account; it goes too.
     for (const [k, v] of pairings) if (v.uid === user.id) pairings.delete(k);
-    saveDb();
+    await db.updateUser(user);
     audit(req, 'auth.logout.all', { user });
     json(res, 200, { ok: true }, { 'Set-Cookie': clearCookie });
   },
@@ -1493,25 +1210,23 @@ const routes = {
     if (!sub?.endpoint || !sub?.keys?.p256dh || !sub?.keys?.auth) return json(res, 400, { error: 'invalid subscription' });
     const bad = pushEndpointError(sub.endpoint);
     if (bad) return json(res, 400, { error: bad });
-    // Only the two keys the push protocol needs are kept: `sub` is caller-supplied and would
-    // otherwise put arbitrary fields into db.json, which every admin route reads back out.
     const keys = { p256dh: String(sub.keys.p256dh), auth: String(sub.keys.auth) };
     const deviceId = deviceIdOf(body.deviceId);
-    // An upsert: the client re-sends its subscription on every boot (lib/push.js) so a row this
-    // instance lost — pruned after a dead send, a rebuilt db.json — comes back without anyone
-    // touching Settings. The same endpoint sent again keeps its original `created`.
     const prev = db.subs.find(s => s.endpoint === sub.endpoint);
     db.subs = db.subs.filter(s => s.endpoint !== sub.endpoint);
-    // A browser holds one subscription per device, so this cap is far above real use. Without
-    // it a single account could pile up endpoints without limit — every one of them a target
-    // sendPush() would then contact, and a whole rewrite of db.json per addition.
     const mine = db.subs.filter(s => s.userId === user.id);
     if (mine.length >= MAX_SUBS_PER_USER) {
       const drop = new Set(mine.slice(0, mine.length - MAX_SUBS_PER_USER + 1).map(s => s.endpoint));
       db.subs = db.subs.filter(s => !drop.has(s.endpoint));
     }
-    db.subs.push({ userId: user.id, endpoint: sub.endpoint, keys, ...(deviceId ? { deviceId } : {}), created: prev?.created || new Date().toISOString() });
-    saveDb();
+    await db.createSub({
+      userId: user.id,
+      endpoint: sub.endpoint,
+      auth: keys.auth,
+      p256dh: keys.p256dh,
+      deviceId,
+      created: prev?.created || new Date().toISOString()
+    });
     json(res, 200, { ok: true });
   },
 
@@ -1529,8 +1244,7 @@ const routes = {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
     const body = await readBody(req);
-    db.subs = db.subs.filter(s => !(s.userId === user.id && s.endpoint === body.endpoint));
-    saveDb();
+    await db.deleteSubByEndpoint(body.endpoint);
     json(res, 200, { ok: true });
   },
 
@@ -1655,7 +1369,7 @@ const routes = {
     u.memberStatus = memberStatusOf(body.memberStatus);
     u.assignedCoach = String(body.assignedCoach || '').trim().slice(0, 60) || null;
     u.memberNote = String(body.memberNote || '').trim().slice(0, 400);
-    saveDb();
+    await db.updateUser(u);
     const changed = before.memberStatus !== u.memberStatus
       || before.assignedCoach !== u.assignedCoach
       || before.memberNote !== u.memberNote;
@@ -1680,7 +1394,7 @@ const routes = {
     if (isAdmin(u)) return json(res, 400, { error: 'cannot disable an admin' });
     u.disabled = !!body.disabled;
     if (u.disabled) presence.delete(u.id);   // drop them off "training now" at once
-    saveDb();
+    await db.updateUser(u);
     audit(req, u.disabled ? 'admin.user.disable' : 'admin.user.enable', { user: admin, target: u });
     json(res, 200, { ok: true, id: u.id, disabled: u.disabled });
   },
@@ -1704,8 +1418,7 @@ const routes = {
     // db.json keep working — validation is an exact string compare, never a length or format check.
     do { code = crypto.randomBytes(8).toString('hex').toUpperCase(); } while (db.invites.some(i => i.code === code));
     const invite = { code, note: String(body.note || '').slice(0, 60), createdBy: admin.id, created: new Date().toISOString() };
-    db.invites.push(invite);
-    saveDb();
+    await db.createInvite(invite);
     audit(req, 'admin.invite.create', { user: admin, msg: code });
     json(res, 200, { invite });
   },
@@ -1716,8 +1429,7 @@ const routes = {
     const inv = db.invites.find(i => i.code === String(body.code || '').toUpperCase());
     if (!inv) return json(res, 404, { error: 'no such code' });
     if (inv.usedBy) return json(res, 400, { error: 'already used — cannot revoke' });
-    db.invites = db.invites.filter(i => i.code !== inv.code);
-    saveDb();
+    await db.revokeInvite(inv.code);
     audit(req, 'admin.invite.revoke', { user: admin, msg: inv.code });
     json(res, 200, { ok: true });
   },
@@ -1787,10 +1499,10 @@ const routes = {
       seats: Math.max(1, Math.min(50000, +body.seats || 500)),
       ownerId: null,
       note: String(body.note || '').trim().slice(0, 240),
+      licenseExpiresAt: null,
       created: new Date().toISOString()
     };
-    db.gyms.push(gym);
-    saveDb();
+    await db.createGym(gym);
     audit(req, 'platform.gym.create', { user: superAdmin, msg: gym.name });
     json(res, 200, { ok: true, gym });
   },
@@ -1807,7 +1519,7 @@ const routes = {
     gym.plan = gymPlanOf(body.plan || gym.plan);
     gym.seats = Math.max(1, Math.min(50000, +body.seats || gym.seats || 500));
     gym.note = String(body.note ?? gym.note ?? '').trim().slice(0, 240);
-    saveDb();
+    await db.updateGym(gym.id, { name: gym.name, status: gym.status, plan: gym.plan, seats: gym.seats, note: gym.note });
     audit(req, 'platform.gym.update', { user: superAdmin, msg: gym.name });
     json(res, 200, { ok: true, gym });
   },
@@ -1822,7 +1534,8 @@ const routes = {
     gym.ownerId = user.id;
     user.gymId = gym.id;
     user.admin = true;
-    saveDb();
+    await db.updateGym(gym.id, { ownerId: user.id });
+    await db.updateUser({ ...user, gymId: gym.id, admin: true });
     audit(req, 'platform.gym.owner', { user: superAdmin, target: user, msg: gym.id });
     json(res, 200, { ok: true, gym: { id: gym.id, ownerId: gym.ownerId }, user: publicUser(user) });
   },
