@@ -19,7 +19,7 @@ import { startCadence } from './coach/cadence.js';
 import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
 import { verifyError } from './verify-error.js';
-import * as db from './db.js';
+import { db } from './db.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
@@ -184,7 +184,7 @@ function readState(uid) {
 
 async function bootstrapV1() {
   await initDbIfNeeded();
-  await loadCache();
+  await db.loadCache();
   let changed = false;
   if (!db.gyms.length) {
     await db.createGym({
@@ -831,7 +831,7 @@ const routes = {
 
   'POST /api/auth/register': async (req, res) => {
     await initDbIfNeeded();
-    await loadCache();
+    await db.loadCache();
     const body = await readBody(req);
     const email = normalizeEmail(body.email);
     const username = String(body.username || '').trim().slice(0, 40);
@@ -913,7 +913,7 @@ const routes = {
 
   'POST /api/auth/login': async (req, res) => {
     await initDbIfNeeded();
-    await loadCache();
+    await db.loadCache();
     const body = await readBody(req);
     const identifier = String(body.identifier || '').trim().toLowerCase();
     const password = String(body.password || '');
@@ -948,7 +948,7 @@ const routes = {
 
   'POST /api/register/options': async (req, res) => {
     await initDbIfNeeded();
-    await loadCache();
+    await db.loadCache();
     const body = await readBody(req);
     const name = String(body.name || '').trim().slice(0, 40);
     if (!name) return json(res, 400, { error: 'name required' });
