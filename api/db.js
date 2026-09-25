@@ -391,7 +391,7 @@ const db = {
   saveDb,
   loadCache,
   migrateFromDbJson,
-  getUserById,
+  getUserByIdSync,
   getUserByEmail,
   getUserByUsername,
   getAllUsers,
