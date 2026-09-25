@@ -19,6 +19,301 @@ import { startCadence } from './coach/cadence.js';
 import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
 import { verifyError } from './verify-error.js';
+import * as db from './db.js';
+
+/* ---------- MySQL connection pool ---------- */
+import mysql from 'mysql2/promise';
+
+const pool = mysql.createPool({
+  host: process.env.DB_HOST || 'localhost',
+  port: process.env.DB_PORT || 3306,
+  user: process.env.DB_USER || 'root',
+  password: process.env.DB_PASSWORD || '',
+  database: process.env.DB_NAME || 'tracketgym',
+  waitForConnections: true,
+  connectionLimit: 10,
+  queueLimit: 0
+});
+
+// Initialize database schema on startup
+async function initDb() {
+  const conn = await pool.getConnection();
+  try {
+    // Create users table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(100),
+        username VARCHAR(100),
+        email VARCHAR(255),
+        usernameLower VARCHAR(100),
+        emailLower VARCHAR(255),
+        passwordSalt VARCHAR(255),
+        passwordHash VARCHAR(255),
+        gymId VARCHAR(50),
+        admin BOOLEAN DEFAULT FALSE,
+        superadmin BOOLEAN DEFAULT FALSE,
+        disabled BOOLEAN DEFAULT FALSE,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        invitedBy VARCHAR(100),
+        sv INT DEFAULT 0,
+        lastReminder DATE,
+        UNIQUE KEY unique_username (username),
+        UNIQUE KEY unique_email (email),
+        INDEX idx_emailLower (emailLower),
+        INDEX idx_usernameLower (usernameLower),
+        INDEX idx_gymId (gymId)
+      )
+    `);
+
+    // Create credentials table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS credentials (
+        id VARCHAR(255) PRIMARY KEY,
+        userId VARCHAR(50),
+        publicKey LONGTEXT,
+        counter INT,
+        transports JSON,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create subscriptions table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS subscriptions (
+        id VARCHAR(100) PRIMARY KEY,
+        userId VARCHAR(50),
+        endpoint TEXT,
+        auth VARCHAR(255),
+        p256dh VARCHAR(255),
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (userId) REFERENCES users(id) ON DELETE CASCADE
+      )
+    `);
+
+    // Create invites table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS invites (
+        code VARCHAR(50) PRIMARY KEY,
+        createdBy VARCHAR(50),
+        usedBy VARCHAR(50),
+        usedAt TIMESTAMP,
+        revoked BOOLEAN DEFAULT FALSE,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create gyms table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS gyms (
+        id VARCHAR(50) PRIMARY KEY,
+        name VARCHAR(100),
+        slug VARCHAR(100),
+        status VARCHAR(50),
+        plan VARCHAR(50),
+        seats INT,
+        ownerId VARCHAR(50),
+        note TEXT,
+        licenseExpiresAt TIMESTAMP,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    // Create platform_invites table
+    await conn.query(`
+      CREATE TABLE IF NOT EXISTS platform_invites (
+        token VARCHAR(100) PRIMARY KEY,
+        gymId VARCHAR(50),
+        email VARCHAR(255),
+        role VARCHAR(50),
+        name VARCHAR(100),
+        usedBy VARCHAR(50),
+        usedAt TIMESTAMP,
+        expiresAt TIMESTAMP,
+        created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+      )
+    `);
+
+    console.log('Database schema initialized');
+  } finally {
+    conn.release();
+  }
+}
+
+// Migrate existing data from db.json to MySQL
+async function migrateDb() {
+  const conn = await pool.getConnection();
+  try {
+    // Migrate users
+    for (const user of (db.users || [])) {
+      const created = user.created ? new Date(user.created) : new Date();
+      await conn.query(
+        `INSERT IGNORE INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, superadmin, disabled, created, invitedBy, sv, lastReminder)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          user.id, user.name, user.username, user.email,
+          user.usernameLower, user.emailLower,
+          user.passwordSalt, user.passwordHash,
+          user.gymId, user.admin ? 1 : 0, user.superadmin ? 1 : 0, user.disabled ? 1 : 0,
+          created, user.invitedBy, user.sv || 0, user.lastReminder || null
+        ]
+      );
+    }
+
+    // Migrate credentials
+    for (const cred of (db.creds || [])) {
+      const created = cred.created ? new Date(cred.created) : new Date();
+      await conn.query(
+        `INSERT IGNORE INTO credentials (id, userId, publicKey, counter, transports, created)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          cred.id, cred.userId, cred.publicKey,
+          cred.counter || 0,
+          JSON.stringify(cred.transports || []),
+          created
+        ]
+      );
+    }
+
+    // Migrate subscriptions
+    for (const sub of (db.subs || [])) {
+      const created = sub.created ? new Date(sub.created) : new Date();
+      await conn.query(
+        `INSERT IGNORE INTO subscriptions (id, userId, endpoint, auth, p256dh, created)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          sub.id || crypto.randomBytes(12).toString('base64url'),
+          sub.userId, sub.endpoint, sub.auth, sub.p256dh,
+          created
+        ]
+      );
+    }
+
+    // Migrate invites
+    for (const invite of (db.invites || [])) {
+      const created = invite.created ? new Date(invite.created) : new Date();
+      const usedAt = invite.usedAt ? new Date(invite.usedAt) : null;
+      await conn.query(
+        `INSERT IGNORE INTO invites (code, createdBy, usedBy, usedAt, revoked, created)
+         VALUES (?, ?, ?, ?, ?, ?)`,
+        [
+          invite.code, invite.createdBy, invite.usedBy,
+          usedAt, invite.revoked ? 1 : 0, created
+        ]
+      );
+    }
+
+    // Migrate gyms
+    for (const gym of (db.gyms || [])) {
+      const created = gym.created ? new Date(gym.created) : new Date();
+      const licenseExpiresAt = gym.licenseExpiresAt ? new Date(gym.licenseExpiresAt) : null;
+      await conn.query(
+        `INSERT IGNORE INTO gyms (id, name, slug, status, plan, seats, ownerId, note, licenseExpiresAt, created)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          gym.id, gym.name, gym.slug, gym.status, gym.plan, gym.seats,
+          gym.ownerId, gym.note, licenseExpiresAt, created
+        ]
+      );
+    }
+
+    // Migrate platform invites
+    for (const invite of (db.platformInvites || [])) {
+      const created = invite.created ? new Date(invite.created) : new Date();
+      const expiresAt = invite.expiresAt ? new Date(invite.expiresAt) : new Date();
+      const usedAt = invite.usedAt ? new Date(invite.usedAt) : null;
+      await conn.query(
+        `INSERT IGNORE INTO platform_invites (token, gymId, email, role, name, usedBy, usedAt, expiresAt, created)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [
+          invite.token, invite.gymId, invite.email, invite.role,
+          invite.name, invite.usedBy, usedAt, expiresAt, created
+        ]
+      );
+    }
+
+    console.log('Database migration completed');
+  } finally {
+    conn.release();
+  }
+}
+
+// Helper functions for database operations
+async function getUserById(uid) {
+  const [[user]] = await pool.query('SELECT * FROM users WHERE id = ?', [uid]);
+  return user || null;
+}
+
+async function getUserByEmail(email) {
+  const [[user]] = await pool.query('SELECT * FROM users WHERE emailLower = ?', [normalizeEmail(email)]);
+  return user || null;
+}
+
+async function getUserByUsername(username) {
+  const [[user]] = await pool.query('SELECT * FROM users WHERE usernameLower = ?', [normalizeUsername(username)]);
+  return user || null;
+}
+
+async function getAllUsers() {
+  const [users] = await pool.query('SELECT * FROM users');
+  return users;
+}
+
+async function createUser(user) {
+  const created = user.created ? new Date(user.created) : new Date();
+  await pool.query(
+    `INSERT INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, disabled, created, invitedBy, sv)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    [
+      user.id, user.name, user.username, user.email,
+      user.usernameLower, user.emailLower,
+      user.passwordSalt, user.passwordHash,
+      user.gymId, user.admin ? 1 : 0, user.disabled ? 1 : 0,
+      created, user.invitedBy, user.sv || 0
+    ]
+  );
+  return user;
+}
+
+async function updateUser(user) {
+  await pool.query(
+    `UPDATE users SET name = ?, username = ?, email = ?, usernameLower = ?, emailLower = ?, passwordSalt = ?, passwordHash = ?, gymId = ?, admin = ?, disabled = ?, invitedBy = ?, sv = ?, lastReminder = ? WHERE id = ?`,
+    [
+      user.name, user.username, user.email,
+      user.usernameLower, user.emailLower,
+      user.passwordSalt, user.passwordHash,
+      user.gymId, user.admin ? 1 : 0, user.disabled ? 1 : 0,
+      user.invitedBy, user.sv || 0, user.lastReminder, user.id
+    ]
+  );
+}
+
+async function addCredential(cred) {
+  const created = cred.created ? new Date(cred.created) : new Date();
+  await pool.query(
+    `INSERT INTO credentials (id, userId, publicKey, counter, transports, created)
+     VALUES (?, ?, ?, ?, ?, ?)`,
+    [
+      cred.id, cred.userId, cred.publicKey,
+      cred.counter || 0, JSON.stringify(cred.transports || []), created
+    ]
+  );
+}
+
+async function getCredentialById(id) {
+  const [[cred]] = await pool.query('SELECT * FROM credentials WHERE id = ?', [id]);
+  return cred || null;
+}
+
+async function getAllCredentials() {
+  const [creds] = await pool.query('SELECT * FROM credentials');
+  return creds;
+}
+
+async function updateCredentialCounter(id, counter) {
+  await pool.query('UPDATE credentials SET counter = ? WHERE id = ?', [counter, id]);
+}
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
@@ -64,23 +359,16 @@ const secretFile = path.join(DATA, 'secret');
 if (!fs.existsSync(secretFile)) fs.writeFileSync(secretFile, crypto.randomBytes(32).toString('hex'), { mode: 0o600 });
 const SECRET = fs.readFileSync(secretFile, 'utf8').trim();
 
-const dbFile = path.join(DATA, 'db.json');
-let db = { users: [], creds: [], subs: [], invites: [], gyms: [], platformInvites: [] };
-try { db = JSON.parse(fs.readFileSync(dbFile, 'utf8')); } catch {}
-db.subs = db.subs || [];
-db.invites = db.invites || [];
-db.gyms = Array.isArray(db.gyms) ? db.gyms : [];
-db.platformInvites = Array.isArray(db.platformInvites) ? db.platformInvites : [];
+let dbInitialized = false;
+
+async function initDbIfNeeded() {
+  if (!dbInitialized) {
+    await db.initDb();
+    dbInitialized = true;
+  }
+}
 const isSuperAdmin = user => !!user && (user.superadmin === true || SUPER_ADMIN_UIDS.includes(user.id));
 const isAdmin = user => !!user && (isSuperAdmin(user) || user.admin === true || ADMIN_UIDS.includes(user.id));
-// 0600: db.json holds passkey credential material. It used to be covered by a blanket 0700 on
-// the whole directory; now that the directory stays traversable, the file carries its own mode.
-function saveDb() { atomicWrite(dbFile, JSON.stringify(db, null, 2), 0o600); }
-function atomicWrite(file, content, mode) {
-  const tmp = file + '.tmp';
-  fs.writeFileSync(tmp, content, mode ? { mode } : undefined);
-  fs.renameSync(tmp, file);
-}
 
 function normalizeEmail(v) {
   return String(v || '').trim().toLowerCase();
@@ -102,10 +390,11 @@ function slugOf(v) {
   return String(v || '').toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 50) || 'gym';
 }
 function gymById(id) {
-  return db.gyms.find(g => g.id === id) || null;
+  return db.getGymById(id);
 }
-function defaultGymId() {
-  return db.gyms[0]?.id || null;
+async function defaultGymId() {
+  const gyms = await db.getAllGyms();
+  return gyms[0]?.id || null;
 }
 function userGymId(user) {
   return user?.gymId || defaultGymId();
@@ -115,8 +404,8 @@ function canManageUser(actor, target) {
   if (isSuperAdmin(actor)) return true;
   return userGymId(actor) === userGymId(target);
 }
-function publicUser(user) {
-  const gym = gymById(userGymId(user));
+async function publicUser(user) {
+  const gym = await db.getGymById(userGymId(user));
   return {
     id: user.id,
     name: user.name,
@@ -127,11 +416,16 @@ function publicUser(user) {
     gymName: gym?.name || null
   };
 }
-function gymMembers(gymId) {
-  return db.users.filter(u => userGymId(u) === gymId);
+
+async function gymMembers(gymId) {
+  const users = await db.getAllUsers();
+  const defaultGym = await defaultGymId();
+  return users.filter(u => userGymId(u) === gymId);
 }
-function gymSeatsUsed(gymId) {
-  return gymMembers(gymId).length;
+
+async function gymSeatsUsed(gymId) {
+  const members = await gymMembers(gymId);
+  return members.length;
 }
 function gymAccessPolicy(gym) {
   if (!gym) return { ok: true };
@@ -962,6 +1256,7 @@ const routes = {
   },
 
   'POST /api/register/verify': async (req, res) => {
+    await initDbIfNeeded();
     const body = await readBody(req);
     const c = takeChallenge(body.cid);
     if (!c || !c.uid) {
@@ -987,37 +1282,42 @@ const routes = {
       return json(res, 400, { error: 'not verified' });
     }
     const { credential } = verification.registrationInfo;
-    if (db.creds.find(x => x.id === credential.id)) {
+    const existingCred = await db.getCredById(credential.id);
+    if (existingCred) {
       audit(req, 'auth.register.fail', { ok: false, name: c.name, msg: 'credential-exists' });
       return json(res, 409, { error: 'credential already registered' });
     }
     // Re-check the invite at the last moment (it may have been used/revoked since options), then burn it.
     let invite = null;
     if (INVITE_ONLY) {
-      invite = db.invites.find(i => i.code === c.code && !i.usedBy && !i.revoked);
-      if (!invite) {
+      invite = await db.getInviteByCode(c.code);
+      if (!invite || invite.usedBy || invite.revoked) {
         audit(req, 'auth.register.fail', { ok: false, name: c.name, msg: 'invite-invalid' });
         return json(res, 403, { error: 'invite code is no longer valid — ask for a new one' });
       }
     }
     const user = { id: c.uid, name: c.name, created: new Date().toISOString() };
-    user.gymId = user.gymId || defaultGymId();
-    if (invite) { user.invitedBy = invite.code; invite.usedBy = user.id; invite.usedAt = user.created; }
-    db.users.push(user);
-    db.creds.push({
-      id: credential.id, userId: user.id,
+    const defGym = await defaultGymId();
+    user.gymId = user.gymId || defGym;
+    if (invite) {
+      user.invitedBy = invite.code;
+      await db.useInvite(invite.code, user.id);
+    }
+    await db.createUser(user);
+    await db.createCred({
+      id: credential.id,
+      userId: user.id,
       publicKey: Buffer.from(credential.publicKey).toString('base64url'),
       counter: credential.counter || 0,
       transports: body.credential?.response?.transports || []
     });
-    saveDb();
     // First user becomes admin when no ADMIN_UIDS are configured (convenience for self-hosted demo)
-    if (!ADMIN_UIDS.length && !db.users.some(u => u.admin)) {
-      user.admin = true;
-      saveDb();
+    const allUsers = await db.getAllUsers();
+    if (!ADMIN_UIDS.length && !allUsers.some(u => u.admin)) {
+      await db.addUserAdmin(user.id);
     }
     audit(req, 'auth.register.ok', { user, msg: invite ? invite.code : null });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: await publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   'POST /api/login/options': async (req, res) => {
@@ -1029,13 +1329,14 @@ const routes = {
   },
 
   'POST /api/login/verify': async (req, res) => {
+    await initDbIfNeeded();
     const body = await readBody(req);
     const c = takeChallenge(body.cid);
     if (!c) {
       audit(req, 'auth.login.fail', { ok: false, msg: 'challenge-expired' });
       return json(res, 400, { error: 'challenge expired — try again' });
     }
-    const cred = db.creds.find(x => x.id === body.credential?.id);
+    const cred = await db.getCredById(body.credential?.id);
     if (!cred) {
       // No credential id goes in the log: it is a stable handle for one passkey, and recording it
       // would let an admin correlate an unknown device across attempts. Nothing here identifies
@@ -1059,16 +1360,17 @@ const routes = {
         }
       });
     } catch (e) {
-      audit(req, 'auth.login.fail', { ok: false, user: db.users.find(u => u.id === cred.userId), uid: cred.userId, msg: 'verify-error' });
+      const user = await db.getUserById(cred.userId);
+      audit(req, 'auth.login.fail', { ok: false, user, uid: cred.userId, msg: 'verify-error' });
       return json(res, 400, { error: verifyError(e, { rpId: RP_ID, origin: ORIGIN }) });
     }
     if (!verification.verified) {
-      audit(req, 'auth.login.fail', { ok: false, user: db.users.find(u => u.id === cred.userId), uid: cred.userId, msg: 'not-verified' });
+      const user = await db.getUserById(cred.userId);
+      audit(req, 'auth.login.fail', { ok: false, user, uid: cred.userId, msg: 'not-verified' });
       return json(res, 400, { error: 'not verified' });
     }
-    cred.counter = verification.authenticationInfo.newCounter;
-    saveDb();
-    const user = db.users.find(u => u.id === cred.userId);
+    await db.updateCredCounter(cred.id, verification.authenticationInfo.newCounter);
+    const user = await db.getUserById(cred.userId);
     if (!user) {
       audit(req, 'auth.login.fail', { ok: false, uid: cred.userId, msg: 'user-missing' });
       return json(res, 500, { error: 'user missing' });
@@ -1078,7 +1380,7 @@ const routes = {
       return json(res, 403, { error: 'this account has been disabled' });
     }
     audit(req, 'auth.login.ok', { user });
-    json(res, 200, { user: publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
+    json(res, 200, { user: await publicUser(user) }, { 'Set-Cookie': sessionCookie(user) });
   },
 
   // Reads the session purely so the sign-out can be recorded; the cookie is cleared either way.
