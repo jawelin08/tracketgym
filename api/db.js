@@ -123,7 +123,33 @@ export const db = {
   get gyms() { return gyms; },
   set gyms(v) { gyms = v; },
   get platformInvites() { return platformInvites; },
-  set platformInvites(v) { platformInvites = v; }
+  set platformInvites(v) { platformInvites = v; },
+  /* functions */
+  initDb,
+  saveDb,
+  loadCache,
+  getUserById,
+  getUserByEmail,
+  getUserByUsername,
+  getAllUsers,
+  createUser,
+  updateUser,
+  addUserAdmin,
+  getCredById,
+  createCred,
+  updateCredCounter,
+  getInviteByCode,
+  useInvite,
+  getPlatformInviteByToken,
+  createPlatformInvite,
+  usePlatformInvite,
+  getGymById,
+  getAllGyms,
+  createGym,
+  updateGym,
+  getSubByEndpoint,
+  createSub,
+  deleteSubByEndpoint
 };
 
 /* ---------- persistent save ---------- */
