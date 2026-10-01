@@ -37,6 +37,51 @@ function normalizeUsername(u) {
   return (u || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
 }
 
+async function ensureColumn(conn, table, column, definition) {
+  const [columns] = await conn.query(
+    'SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND COLUMN_NAME = ?',
+    [table, column]
+  );
+  if (columns.length) return;
+  try {
+    await conn.query(`ALTER TABLE \`${table}\` ADD COLUMN \`${column}\` ${definition}`);
+  } catch (error) {
+    if (error.code !== 'ER_DUP_FIELDNAME') throw error;
+  }
+}
+
+async function ensureIndex(conn, table, index, column) {
+  const [indexes] = await conn.query(
+    'SELECT INDEX_NAME FROM INFORMATION_SCHEMA.STATISTICS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = ? AND INDEX_NAME = ?',
+    [table, index]
+  );
+  if (indexes.length) return;
+  try {
+    await conn.query(`CREATE INDEX \`${index}\` ON \`${table}\` (\`${column}\`)`);
+  } catch (error) {
+    if (error.code !== 'ER_DUP_KEYNAME') throw error;
+  }
+}
+
+async function migrateLegacySchema(conn) {
+  await ensureColumn(conn, 'users', 'usernameLower', 'VARCHAR(100) NULL');
+  await ensureColumn(conn, 'users', 'emailLower', 'VARCHAR(255) NULL');
+  await ensureColumn(conn, 'gyms', 'licenseExpiresAt', 'TIMESTAMP NULL');
+  await ensureIndex(conn, 'users', 'idx_emailLower', 'emailLower');
+  await ensureIndex(conn, 'users', 'idx_usernameLower', 'usernameLower');
+
+  const [usersToNormalize] = await conn.query(
+    "SELECT id, username, email, usernameLower, emailLower FROM users WHERE usernameLower IS NULL OR usernameLower = '' OR emailLower IS NULL OR emailLower = ''"
+  );
+  for (const user of usersToNormalize) {
+    await conn.query(
+      'UPDATE users SET usernameLower = ?, emailLower = ? WHERE id = ?',
+      [user.usernameLower || normalizeUsername(user.username) || null,
+       user.emailLower || normalizeEmail(user.email) || null, user.id]
+    );
+  }
+}
+
 /* ---------- schema init ---------- */
 async function initDb() {
   const conn = await pool.getConnection();
@@ -119,6 +164,7 @@ async function initDb() {
       created TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )`);
 
+    await migrateLegacySchema(conn);
     console.log('MySQL schema initialized');
   } finally {
     conn.release();
