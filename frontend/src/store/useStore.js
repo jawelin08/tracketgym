@@ -238,8 +238,10 @@ export const useStore = create((set, get) => {
         import('./useUI.js').then(({ useUI }) => useUI.getState().toast(t('Back online — synced with the server.'))).catch(() => {})
       }
     } catch (e) {
-      // A session that is gone is boot's business (/api/me); the copy stays owed to the server.
-      if (e.status === 401) { localStorage.setItem('gym_dirty', '1'); return }
+      // A session that is gone is boot's business (/api/me) to clear properly, but the banner
+      // must say so now — otherwise a revoked/expired session fails every push silently until
+      // the app happens to restart, and the device looks "synced" while quietly drifting.
+      if (e.status === 401) { localStorage.setItem('gym_dirty', '1'); setSync({ offline: false, pending: true }); return }
       if (isNetworkError(e)) { localStorage.setItem('gym_dirty', '1'); offlineChanges = true; setSync({ offline: true, pending: true }); return }
       if (e.status === 409 && e.data && attempt < 2) {
         // Another device wrote since this one last read. The server sent its document along;
