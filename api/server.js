@@ -585,11 +585,7 @@ function requireSuperAdmin(req, res) {
 const expireCookie = name => `${name}=; Path=/; Max-Age=0; HttpOnly;${SECURE} SameSite=Lax`;
 function sessionCookie(user) {
   const fresh = `${COOKIE}=${makeSession(user)}; Path=/; Max-Age=${SESSION_DAYS * 86400}; HttpOnly;${SECURE} SameSite=Lax`;
-  // Single string when there's no legacy cookie to retire; concatenated string when there is
-  // (comma-separated Set-Cookie is the HTTP spec form — arrays through Node's http module get
-  // mishandled by some proxies, including Railway's edge, which may only surface the last value).
-  if (COOKIE === LEGACY_COOKIE) return fresh;
-  return fresh + ', ' + expireCookie(LEGACY_COOKIE);
+  return fresh;
 }
 const clearCookie = COOKIE === LEGACY_COOKIE
   ? expireCookie(LEGACY_COOKIE)
