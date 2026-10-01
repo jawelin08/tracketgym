@@ -98,9 +98,8 @@ function slugOf(v) {
 function gymById(id) {
   return db.getGymById(id);
 }
-async function defaultGymId() {
-  const gyms = await db.getAllGyms();
-  return gyms[0]?.id || null;
+function defaultGymId() {
+  return db.gyms[0]?.id || null;
 }
 function userGymId(user) {
   return user?.gymId || defaultGymId();
@@ -226,7 +225,8 @@ async function bootstrapV1() {
 }
 
 // run bootstrap once on startup
-bootstrapV1().catch(console.error);
+const bootstrapReady = bootstrapV1();
+bootstrapReady.catch(console.error);
 
 /* ---------- push notifications (Web Push / VAPID) ---------- */
 const vapidFile = path.join(DATA, 'vapid.json');
@@ -835,6 +835,7 @@ const routes = {
   },
 
   'POST /api/auth/register': async (req, res) => {
+    await bootstrapReady;
     await initDbIfNeeded();
     await db.loadCache();
     const body = await readBody(req);
@@ -870,7 +871,8 @@ const routes = {
 
     const uid = crypto.randomBytes(12).toString('base64url');
     const { salt, hash } = hashPassword(password);
-    const gym = await gymById(platformInvite?.gymId || defaultGymId());
+    const gymId = platformInvite?.gymId || defaultGymId();
+    const gym = gymId ? await gymById(gymId) : null;
     if (!gym) return json(res, 500, { error: 'gym not configured' });
     const gymPolicy = gymAccessPolicy(gym);
     if (!gymPolicy.ok) return json(res, 403, { error: gymPolicy.error });
