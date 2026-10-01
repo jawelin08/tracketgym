@@ -7,14 +7,17 @@ import crypto from 'node:crypto';
 
 /* ---------- MySQL connection pool ---------- */
 const databaseUrl = (process.env.DATABASE_URL || process.env.MYSQL_URL || '').trim();
+const databaseUrlConfig = databaseUrl ? new URL(databaseUrl) : null;
+if (databaseUrlConfig) databaseUrlConfig.searchParams.set('timezone', 'Z');
 const pool = databaseUrl
-  ? mysql.createPool(databaseUrl)
+  ? mysql.createPool(databaseUrlConfig.toString())
   : mysql.createPool({
       host:     process.env.DB_HOST || process.env.MYSQLHOST || 'localhost',
       port:     +(process.env.DB_PORT || process.env.MYSQLPORT || 3306),
       user:     process.env.DB_USER || process.env.MYSQLUSER || 'root',
       password: process.env.DB_PASSWORD || process.env.MYSQLPASSWORD || '',
       database: process.env.DB_NAME || process.env.MYSQLDATABASE || process.env.MYSQL_DATABASE || 'tracketgym',
+      timezone: 'Z',
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0
@@ -35,6 +38,13 @@ function normalizeEmail(e) {
 }
 function normalizeUsername(u) {
   return (u || '').trim().toLowerCase().replace(/[^a-z0-9_]/g, '');
+}
+
+function mysqlDate(value) {
+  if (value == null || value === '') return null;
+  const date = value instanceof Date ? value : new Date(value);
+  if (Number.isNaN(date.getTime())) throw new TypeError('Invalid MySQL date value');
+  return date;
 }
 
 async function ensureColumn(conn, table, column, definition) {
@@ -280,23 +290,23 @@ async function migrateFromDbJson(dbJson) {
   }
   for (const cred of (dbJson.creds || [])) {
     await pool.query(`INSERT IGNORE INTO credentials (id, userId, publicKey, counter, transports, created) VALUES (?, ?, ?, ?, ?, ?)`,
-      [cred.id, cred.userId, cred.publicKey, cred.counter || 0, JSON.stringify(cred.transports || []), cred.created || new Date().toISOString()]);
+      [cred.id, cred.userId, cred.publicKey, cred.counter || 0, JSON.stringify(cred.transports || []), mysqlDate(cred.created || new Date())]);
   }
   for (const sub of (dbJson.subs || [])) {
     await pool.query(`INSERT IGNORE INTO subscriptions (id, userId, endpoint, auth, p256dh, created) VALUES (?, ?, ?, ?, ?, ?)`,
-      [sub.id || crypto.randomBytes(12).toString('base64url'), sub.userId, sub.endpoint, sub.auth, sub.p256dh, sub.created || new Date().toISOString()]);
+      [sub.id || crypto.randomBytes(12).toString('base64url'), sub.userId, sub.endpoint, sub.auth, sub.p256dh, mysqlDate(sub.created || new Date())]);
   }
   for (const invite of (dbJson.invites || [])) {
     await pool.query(`INSERT IGNORE INTO invites (code, createdBy, usedBy, usedAt, revoked, created) VALUES (?, ?, ?, ?, ?, ?)`,
-      [invite.code, invite.createdBy, invite.usedBy, invite.usedAt || null, invite.revoked ? 1 : 0, invite.created || new Date().toISOString()]);
+      [invite.code, invite.createdBy, invite.usedBy, mysqlDate(invite.usedAt), invite.revoked ? 1 : 0, mysqlDate(invite.created || new Date())]);
   }
   for (const gym of (dbJson.gyms || [])) {
     await pool.query(`INSERT IGNORE INTO gyms (id, name, slug, status, plan, seats, ownerId, note, licenseExpiresAt, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [gym.id, gym.name, gym.slug, gym.status, gym.plan, gym.seats, gym.ownerId, gym.note, gym.licenseExpiresAt || null, gym.created || new Date().toISOString()]);
+      [gym.id, gym.name, gym.slug, gym.status, gym.plan, gym.seats, gym.ownerId, gym.note, mysqlDate(gym.licenseExpiresAt), mysqlDate(gym.created || new Date())]);
   }
   for (const pi of (dbJson.platformInvites || [])) {
     await pool.query(`INSERT IGNORE INTO platform_invites (token, gymId, email, role, name, usedBy, usedAt, expiresAt, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [pi.token, pi.gymId, pi.email, pi.role, pi.name, pi.usedBy, pi.usedAt || null, pi.expiresAt || null, pi.created || new Date().toISOString()]);
+      [pi.token, pi.gymId, pi.email, pi.role, pi.name, pi.usedBy, mysqlDate(pi.usedAt), mysqlDate(pi.expiresAt), mysqlDate(pi.created || new Date())]);
   }
   console.log('MySQL migration completed');
 }
@@ -331,7 +341,7 @@ async function createUser(user) {
     [user.id, user.name, user.username || null, user.email, user.usernameLower, user.emailLower,
      user.passwordSalt || null, user.passwordHash || null, user.gymId || null,
      user.admin ? 1 : 0, user.superadmin ? 1 : 0, user.disabled ? 1 : 0,
-     user.created || new Date().toISOString(), user.invitedBy || null, user.sv || 0]
+    mysqlDate(user.created || new Date()), user.invitedBy || null, user.sv || 0]
   );
   users.push(user);
   return user;
@@ -365,7 +375,7 @@ async function getCredById(id) {
 async function createCred(cred) {
   await pool.query(
     `INSERT INTO credentials (id, userId, publicKey, counter, transports, created) VALUES (?, ?, ?, ?, ?, ?)`,
-    [cred.id, cred.userId, cred.publicKey, cred.counter || 0, JSON.stringify(cred.transports || []), cred.created || new Date().toISOString()]
+    [cred.id, cred.userId, cred.publicKey, cred.counter || 0, JSON.stringify(cred.transports || []), mysqlDate(cred.created || new Date())]
   );
   creds.push(cred);
 }
@@ -385,7 +395,7 @@ async function getInviteByCode(code) {
 async function createInvite(invite) {
   await pool.query(
     `INSERT INTO invites (code, createdBy, usedBy, usedAt, revoked, created) VALUES (?, ?, ?, ?, ?, ?)`,
-    [invite.code, invite.createdBy || null, invite.usedBy || null, invite.usedAt || null, invite.revoked ? 1 : 0, invite.created || new Date().toISOString()]
+    [invite.code, invite.createdBy || null, invite.usedBy || null, mysqlDate(invite.usedAt), invite.revoked ? 1 : 0, mysqlDate(invite.created || new Date())]
   );
   invites.push(invite);
 }
@@ -411,7 +421,7 @@ async function getPlatformInviteByToken(token) {
 async function createPlatformInvite(invite) {
   await pool.query(
     `INSERT INTO platform_invites (token, gymId, email, role, name, created, expiresAt) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-    [invite.token, invite.gymId, invite.email, invite.role || 'owner', invite.name || null, invite.created || new Date().toISOString(), invite.expiresAt || null]
+    [invite.token, invite.gymId, invite.email, invite.role || 'owner', invite.name || null, mysqlDate(invite.created || new Date()), mysqlDate(invite.expiresAt)]
   );
   platformInvites.push(invite);
 }
@@ -442,7 +452,7 @@ async function createGym(gym) {
   await pool.query(
     `INSERT INTO gyms (id, name, slug, status, plan, seats, ownerId, note, licenseExpiresAt, created) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
     [gym.id, gym.name, gym.slug, gym.status || 'active', gym.plan || 'starter', gym.seats || 500,
-     gym.ownerId || null, gym.note || null, gym.licenseExpiresAt || null, gym.created || new Date().toISOString()]
+    gym.ownerId || null, gym.note || null, mysqlDate(gym.licenseExpiresAt), mysqlDate(gym.created || new Date())]
   );
   gyms.push(gym);
 }
@@ -451,7 +461,7 @@ async function updateGym(id, updates) {
   const fields = Object.keys(updates);
   if (fields.length > 0) {
     const setClause = fields.map(f => `${f} = ?`).join(', ');
-    await pool.query(`UPDATE gyms SET ${setClause} WHERE id = ?`, [...fields.map(f => updates[f]), id]);
+    await pool.query(`UPDATE gyms SET ${setClause} WHERE id = ?`, [...fields.map(f => f === 'licenseExpiresAt' ? mysqlDate(updates[f]) : updates[f]), id]);
   }
   const idx = gyms.findIndex(g => g.id === id);
   if (idx >= 0) Object.assign(gyms[idx], updates);
@@ -467,7 +477,7 @@ async function createSub(sub) {
   sub.id = sub.id || crypto.randomBytes(12).toString('base64url');
   await pool.query(
     `INSERT INTO subscriptions (id, userId, endpoint, auth, p256dh, created) VALUES (?, ?, ?, ?, ?, ?)`,
-    [sub.id, sub.userId, sub.endpoint, sub.auth, sub.p256dh, sub.created || new Date().toISOString()]
+    [sub.id, sub.userId, sub.endpoint, sub.auth, sub.p256dh, mysqlDate(sub.created || new Date())]
   );
   subs.push(sub);
 }
