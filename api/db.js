@@ -6,8 +6,9 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 
 /* ---------- MySQL connection pool ---------- */
-const pool = process.env.DATABASE_URL
-  ? mysql.createPool(process.env.DATABASE_URL)
+const databaseUrl = (process.env.DATABASE_URL || process.env.MYSQL_URL || '').trim();
+const pool = databaseUrl
+  ? mysql.createPool(databaseUrl)
   : mysql.createPool({
       host:     process.env.DB_HOST || 'localhost',
       port:     +(process.env.DB_PORT || 3306),
