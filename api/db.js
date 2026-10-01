@@ -63,12 +63,83 @@ async function ensureIndex(conn, table, index, column) {
   }
 }
 
+const LEGACY_COLUMNS = {
+  users: {
+    name: 'VARCHAR(100) NULL',
+    username: 'VARCHAR(100) NULL',
+    email: 'VARCHAR(255) NULL',
+    usernameLower: 'VARCHAR(100) NULL',
+    emailLower: 'VARCHAR(255) NULL',
+    passwordSalt: 'VARCHAR(255) NULL',
+    passwordHash: 'VARCHAR(255) NULL',
+    gymId: 'VARCHAR(50) NULL',
+    admin: 'BOOLEAN DEFAULT FALSE',
+    superadmin: 'BOOLEAN DEFAULT FALSE',
+    disabled: 'BOOLEAN DEFAULT FALSE',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
+    invitedBy: 'VARCHAR(100) NULL',
+    sv: 'INT DEFAULT 0',
+    lastReminder: 'DATE NULL'
+  },
+  credentials: {
+    userId: 'VARCHAR(50) NULL',
+    publicKey: 'LONGTEXT NULL',
+    counter: 'INT NULL',
+    transports: 'JSON NULL',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+  },
+  subscriptions: {
+    userId: 'VARCHAR(50) NULL',
+    endpoint: 'TEXT NULL',
+    auth: 'VARCHAR(255) NULL',
+    p256dh: 'VARCHAR(255) NULL',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+  },
+  invites: {
+    createdBy: 'VARCHAR(50) NULL',
+    usedBy: 'VARCHAR(50) NULL',
+    usedAt: 'TIMESTAMP NULL',
+    revoked: 'BOOLEAN DEFAULT FALSE',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+  },
+  gyms: {
+    name: 'VARCHAR(100) NULL',
+    slug: 'VARCHAR(100) NULL',
+    status: 'VARCHAR(50) NULL',
+    plan: 'VARCHAR(50) NULL',
+    seats: 'INT NULL',
+    ownerId: 'VARCHAR(50) NULL',
+    note: 'TEXT NULL',
+    licenseExpiresAt: 'TIMESTAMP NULL',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+  },
+  platform_invites: {
+    gymId: 'VARCHAR(50) NULL',
+    email: 'VARCHAR(255) NULL',
+    role: 'VARCHAR(50) NULL',
+    name: 'VARCHAR(100) NULL',
+    usedBy: 'VARCHAR(50) NULL',
+    usedAt: 'TIMESTAMP NULL',
+    expiresAt: 'TIMESTAMP NULL',
+    created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP'
+  }
+};
+
+const LEGACY_INDEXES = [
+  ['users', 'idx_emailLower', 'emailLower'],
+  ['users', 'idx_usernameLower', 'usernameLower'],
+  ['users', 'idx_gymId', 'gymId']
+];
+
 async function migrateLegacySchema(conn) {
-  await ensureColumn(conn, 'users', 'usernameLower', 'VARCHAR(100) NULL');
-  await ensureColumn(conn, 'users', 'emailLower', 'VARCHAR(255) NULL');
-  await ensureColumn(conn, 'gyms', 'licenseExpiresAt', 'TIMESTAMP NULL');
-  await ensureIndex(conn, 'users', 'idx_emailLower', 'emailLower');
-  await ensureIndex(conn, 'users', 'idx_usernameLower', 'usernameLower');
+  for (const [table, columns] of Object.entries(LEGACY_COLUMNS)) {
+    for (const [column, definition] of Object.entries(columns)) {
+      await ensureColumn(conn, table, column, definition);
+    }
+  }
+  for (const [table, index, column] of LEGACY_INDEXES) {
+    await ensureIndex(conn, table, index, column);
+  }
 
   const [usersToNormalize] = await conn.query(
     "SELECT id, username, email, usernameLower, emailLower FROM users WHERE usernameLower IS NULL OR usernameLower = '' OR emailLower IS NULL OR emailLower = ''"
