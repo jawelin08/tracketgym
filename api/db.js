@@ -31,6 +31,7 @@ let invites = [];
 let gyms = [];
 let platformInvites = [];
 let cacheLoaded = false;
+let cacheLoading = null;
 
 /* ---------- helpers ---------- */
 function normalizeEmail(e) {
@@ -89,7 +90,10 @@ const LEGACY_COLUMNS = {
     created: 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP',
     invitedBy: 'VARCHAR(100) NULL',
     sv: 'INT DEFAULT 0',
-    lastReminder: 'DATE NULL'
+    lastReminder: 'DATE NULL',
+    memberStatus: "VARCHAR(30) DEFAULT 'active'",
+    assignedCoach: 'VARCHAR(60) NULL',
+    memberNote: 'TEXT NULL'
   },
   credentials: {
     userId: 'VARCHAR(50) NULL',
@@ -184,6 +188,9 @@ async function initDb() {
       invitedBy VARCHAR(100),
       sv INT DEFAULT 0,
       lastReminder DATE,
+      memberStatus VARCHAR(30) DEFAULT 'active',
+      assignedCoach VARCHAR(60),
+      memberNote TEXT,
       UNIQUE KEY unique_username (username),
       UNIQUE KEY unique_email (email),
       INDEX idx_emailLower (emailLower),
@@ -255,19 +262,32 @@ async function initDb() {
 /* ---------- load cache from MySQL ---------- */
 async function loadCache() {
   if (cacheLoaded) return;
-  cacheLoaded = true;
-  try {
-    const [u] = await pool.query('SELECT * FROM users'); users = u || [];
-    const [c] = await pool.query('SELECT * FROM credentials'); creds = c || [];
-    const [s] = await pool.query('SELECT * FROM subscriptions'); subs = s || [];
-    const [i] = await pool.query('SELECT * FROM invites'); invites = i || [];
-    const [g] = await pool.query('SELECT * FROM gyms'); gyms = g || [];
-    const [pi] = await pool.query('SELECT * FROM platform_invites'); platformInvites = pi || [];
+  if (cacheLoading) return cacheLoading;
+  cacheLoading = (async () => {
+    const [[loadedUsers], [loadedCreds], [loadedSubs], [loadedInvites], [loadedGyms], [loadedPlatformInvites]] =
+      await Promise.all([
+        pool.query('SELECT * FROM users'),
+        pool.query('SELECT * FROM credentials'),
+        pool.query('SELECT * FROM subscriptions'),
+        pool.query('SELECT * FROM invites'),
+        pool.query('SELECT * FROM gyms'),
+        pool.query('SELECT * FROM platform_invites')
+      ]);
+    users = loadedUsers || [];
+    creds = loadedCreds || [];
+    subs = loadedSubs || [];
+    invites = loadedInvites || [];
+    gyms = loadedGyms || [];
+    platformInvites = loadedPlatformInvites || [];
+    cacheLoaded = true;
     console.log('MySQL cache loaded');
-  } catch (e) {
-    console.warn('MySQL cache load failed:', e.message);
-    users = []; creds = []; subs = []; invites = []; gyms = []; platformInvites = [];
-  }
+  })().catch(error => {
+    cacheLoading = null;
+    throw error;
+  }).finally(() => {
+    if (cacheLoaded) cacheLoading = null;
+  });
+  return cacheLoading;
 }
 
 /* ---------- save (no-op for MySQL) ---------- */
@@ -281,11 +301,12 @@ async function migrateFromDbJson(dbJson) {
   for (const user of dbJson.users) {
     const created = user.created ? new Date(user.created) : new Date();
     await pool.query(
-      `INSERT IGNORE INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, superadmin, disabled, created, invitedBy, sv, lastReminder)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      `INSERT IGNORE INTO users (id, name, username, email, usernameLower, emailLower, passwordSalt, passwordHash, gymId, admin, superadmin, disabled, created, invitedBy, sv, lastReminder, memberStatus, assignedCoach, memberNote)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [user.id, user.name, user.username, user.email, user.usernameLower, user.emailLower,
        user.passwordSalt, user.passwordHash, user.gymId, user.admin ? 1 : 0, user.superadmin ? 1 : 0,
-       user.disabled ? 1 : 0, created, user.invitedBy, user.sv || 0, user.lastReminder || null]
+       user.disabled ? 1 : 0, created, user.invitedBy, user.sv || 0, user.lastReminder || null,
+       user.memberStatus || 'active', user.assignedCoach || null, user.memberNote || '']
     );
   }
   for (const cred of (dbJson.creds || [])) {
@@ -322,6 +343,11 @@ async function getUserByEmail(email) {
   return row || null;
 }
 
+async function getUserById(id) {
+  const [[row]] = await pool.query('SELECT * FROM users WHERE id = ?', [id]);
+  return row || null;
+}
+
 async function getUserByUsername(username) {
   const [[row]] = await pool.query('SELECT * FROM users WHERE usernameLower = ?', [normalizeUsername(username)]);
   return row || null;
@@ -351,11 +377,12 @@ async function updateUser(user) {
   await pool.query(
     `UPDATE users SET name = ?, username = ?, email = ?, usernameLower = ?, emailLower = ?,
      passwordSalt = ?, passwordHash = ?, gymId = ?, admin = ?, superadmin = ?, disabled = ?,
-     invitedBy = ?, sv = ?, lastReminder = ? WHERE id = ?`,
+     invitedBy = ?, sv = ?, lastReminder = ?, memberStatus = ?, assignedCoach = ?, memberNote = ? WHERE id = ?`,
     [user.name, user.username || null, user.email, user.usernameLower || null, user.emailLower || null,
      user.passwordSalt || null, user.passwordHash || null, user.gymId || null,
      user.admin ? 1 : 0, user.superadmin ? 1 : 0, user.disabled ? 1 : 0,
-     user.invitedBy || null, user.sv || 0, user.lastReminder || null, user.id]
+     user.invitedBy || null, user.sv || 0, user.lastReminder || null,
+     user.memberStatus || 'active', user.assignedCoach || null, user.memberNote || '', user.id]
   );
   const idx = users.findIndex(u => u.id === user.id);
   if (idx >= 0) users[idx] = user;
@@ -522,6 +549,7 @@ const db = {
   loadCache,
   migrateFromDbJson,
   getUserByIdSync,
+  getUserById,
   getUserByEmail,
   getUserByUsername,
   getAllUsers,
@@ -553,8 +581,3 @@ const db = {
 };
 
 export { db, pool, getUserByIdSync };
-
-/* ---------- auto-init on import ---------- */
-Promise.resolve().then(() => {
-  initDb().then(() => loadCache()).catch(e => console.warn('db auto-init failed:', e.message));
-}).catch(() => {});

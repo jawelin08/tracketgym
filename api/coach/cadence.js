@@ -46,37 +46,46 @@ export function isDue(coach, S, now, reviewedAt = 0) {
 }
 
 /**
- * @param {object} deps  { users(): [{id}], userNow(tz): {date,hhmm,weekday} }
+ * @param {object} deps  { users(): Promise<Array<{id: string}>>, userNow(tz): {date,hhmm,weekday} }
  */
 export function startCadence(deps) {
-  const timer = setInterval(() => {
-    if (!cfgStore.isEnabled() || !cfgStore.isConnected()) return;
-    for (const user of deps.users()) {
-      try {
-        const S = jobs.readState(user.id);
-        const coach = S?.coach;
-        if (!coach?.consent?.agreedAt) continue;         // consent revoked ⇒ cadence stops
-        // A job still running, or a proposal nobody has answered, is not a reason for another:
-        // a second review would only replace the first unread. status() also retires an
-        // expired proposal, which a phone that stays closed never polls for.
-        const st = jobs.status(user.id);
-        if (st.job || st.pending) continue;
-        // Reviewed means the model read those workouts and answered — with a proposal, with
-        // "nothing to change", or with an answer that failed validation and was paid for all the
-        // same. A call that never reached it (timeout, no runtime, consent, switched off) is retried.
-        const reviewedAt = Math.max(0, ...jobs.readUser(user.id).history
-          .filter(h => h.kind === 'review' && (h.outcome === 'ready' || h.outcome === 'nochange'
-            || (h.outcome === 'failed' && h.errorClass === 'unusable')))
-          .map(h => h.at || 0));
-        const tz = coach.cadence?.weekly ? (S.reminder?.tz || 'UTC') : null;
-        const now = tz ? deps.userNow(tz) : null;
-        if (!isDue(coach, S, now, reviewedAt)) continue;
-        jobs.enqueue(user.id, { kind: 'review', trigger: 'scheduled' });
-        console.log('coach: scheduled review queued for', user.id);
-      } catch (e) {
-        // Caps, an in-flight job, a provider that just went down: all ordinary, all silent.
-        if (!(e instanceof jobs.CoachError)) console.error('coach cadence', user.id, e);
+  let ticking = false;
+  const timer = setInterval(async () => {
+    if (ticking) return;
+    ticking = true;
+    try {
+      if (!cfgStore.isEnabled() || !cfgStore.isConnected()) return;
+      for (const user of await deps.users()) {
+        try {
+          const S = jobs.readState(user.id);
+          const coach = S?.coach;
+          if (!coach?.consent?.agreedAt) continue;         // consent revoked ⇒ cadence stops
+          // A job still running, or a proposal nobody has answered, is not a reason for another:
+          // a second review would only replace the first unread. status() also retires an
+          // expired proposal, which a phone that stays closed never polls for.
+          const st = jobs.status(user.id);
+          if (st.job || st.pending) continue;
+          // Reviewed means the model read those workouts and answered — with a proposal, with
+          // "nothing to change", or with an answer that failed validation and was paid for all the
+          // same. A call that never reached it (timeout, no runtime, consent, switched off) is retried.
+          const reviewedAt = Math.max(0, ...jobs.readUser(user.id).history
+            .filter(h => h.kind === 'review' && (h.outcome === 'ready' || h.outcome === 'nochange'
+              || (h.outcome === 'failed' && h.errorClass === 'unusable')))
+            .map(h => h.at || 0));
+          const tz = coach.cadence?.weekly ? (S.reminder?.tz || 'UTC') : null;
+          const now = tz ? deps.userNow(tz) : null;
+          if (!isDue(coach, S, now, reviewedAt)) continue;
+          jobs.enqueue(user.id, { kind: 'review', trigger: 'scheduled' });
+          console.log('coach: scheduled review queued for', user.id);
+        } catch (e) {
+          // Caps, an in-flight job, a provider that just went down: all ordinary, all silent.
+          if (!(e instanceof jobs.CoachError)) console.error('coach cadence', user.id, e);
+        }
       }
+    } catch (e) {
+      console.error('coach cadence', e);
+    } finally {
+      ticking = false;
     }
   }, TICK_MS);
   timer.unref();

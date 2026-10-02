@@ -142,7 +142,8 @@ function gymAccessPolicy(gym) {
   return { ok: true };
 }
 function gymPolicyForUser(user) {
-  return gymAccessPolicy(gymById(userGymId(user)));
+  const gym = db.gyms.find(g => g.id === userGymId(user)) || null;
+  return gymAccessPolicy(gym);
 }
 async function issuePlatformInvite({ gymId, email, role = 'owner', name = '' }) {
   const token = crypto.randomBytes(24).toString('base64url');
@@ -224,9 +225,28 @@ async function bootstrapV1() {
   return changed;
 }
 
-// run bootstrap once on startup
-const bootstrapReady = bootstrapV1();
-bootstrapReady.catch(console.error);
+// Bootstrap before serving requests. Share one attempt across requests, but allow a failed
+// transient database connection to be retried on the next request.
+let bootstrapPromise = null;
+let bootstrapError = null;
+let bootstrapRetryAt = 0;
+function ensureBootstrap() {
+  if (bootstrapError && Date.now() < bootstrapRetryAt) return Promise.reject(bootstrapError);
+  if (!bootstrapPromise) {
+    bootstrapPromise = bootstrapV1().catch(error => {
+      bootstrapPromise = null;
+      bootstrapError = error;
+      bootstrapRetryAt = Date.now() + 5000;
+      throw error;
+    }).then(result => {
+      bootstrapError = null;
+      bootstrapRetryAt = 0;
+      return result;
+    });
+  }
+  return bootstrapPromise;
+}
+ensureBootstrap().catch(error => console.error('startup bootstrap failed:', error));
 
 /* ---------- push notifications (Web Push / VAPID) ---------- */
 const vapidFile = path.join(DATA, 'vapid.json');
@@ -452,38 +472,47 @@ function readStateCached(uid) {
   stateCache.set(uid, { mtimeMs: st.mtimeMs, size: st.size, S });
   return S;
 }
+let reminderTickRunning = false;
 setInterval(async () => {
-  const users = await db.getAllUsers();
-  const subsMap = new Map();
-  for (const u of users) {
-    if (!subsMap.has(u.id)) {
-      subsMap.set(u.id, (await db.getSubsByUserId(u.id)).length > 0);
+  if (reminderTickRunning) return;
+  reminderTickRunning = true;
+  try {
+    const users = await db.getAllUsers();
+    const subsMap = new Map();
+    for (const u of users) {
+      if (!subsMap.has(u.id)) {
+        subsMap.set(u.id, (await db.getSubsByUserId(u.id)).length > 0);
+      }
     }
-  }
-  for (const user of users) {
-    if (!subsMap.get(user.id)) continue;
-    // One user's state file is one user's problem: a shape this tick cannot read is logged and
-    // skipped, not allowed to take the process — and everyone else's reminders — down with it.
-    // PUT /api/data refuses the obvious shapes, but a file already on disk answers to nobody.
-    try {
-      const S = readStateCached(user.id);
-      if (!S?.reminder?.on) continue;
-      const now = userNow(S.reminder.tz || 'UTC');
-      if (!now) continue;
-      const late = minutesLate(S.reminder.time, now);
-      if (!(late >= 0 && late <= REMINDER_WINDOW_MIN)) continue;
-      if (user.lastReminder === now.date) continue;
-      if ((S.workouts || []).some(w => w.d === now.date)) continue;
-      const rid = effectiveRoutineId(S, now.date);
-      if (!rid) continue; // rest day — nothing planned
-      const routine = (S.routines || []).find(r => r.id === rid);
-      console.log('reminder firing', user.id, rid);
-      user.lastReminder = now.date;
-      await db.updateUser({ ...user, lastReminder: now.date });
-      sendPush(user.id, dayReminderPush(S.lang, routine));
-    } catch (e) {
-      console.error('reminder tick', user.id, e);
+    for (const user of users) {
+      if (!subsMap.get(user.id)) continue;
+      // One user's state file is one user's problem: a shape this tick cannot read is logged and
+      // skipped, not allowed to take the process — and everyone else's reminders — down with it.
+      // PUT /api/data refuses the obvious shapes, but a file already on disk answers to nobody.
+      try {
+        const S = readStateCached(user.id);
+        if (!S?.reminder?.on) continue;
+        const now = userNow(S.reminder.tz || 'UTC');
+        if (!now) continue;
+        const late = minutesLate(S.reminder.time, now);
+        if (!(late >= 0 && late <= REMINDER_WINDOW_MIN)) continue;
+        if (user.lastReminder === now.date) continue;
+        if ((S.workouts || []).some(w => w.d === now.date)) continue;
+        const rid = effectiveRoutineId(S, now.date);
+        if (!rid) continue; // rest day — nothing planned
+        const routine = (S.routines || []).find(r => r.id === rid);
+        console.log('reminder firing', user.id, rid);
+        user.lastReminder = now.date;
+        await db.updateUser({ ...user, lastReminder: now.date });
+        sendPush(user.id, dayReminderPush(S.lang, routine));
+      } catch (e) {
+        console.error('reminder tick', user.id, e);
+      }
     }
+  } catch (e) {
+    console.error('reminder tick', e);
+  } finally {
+    reminderTickRunning = false;
   }
 // Checked every 10s (not 60s) — ticks aren't aligned to the top of the minute, so a 60s
 // interval could sit on your target minute for up to 59s before noticing. 10s caps that at ~9s.
@@ -811,7 +840,7 @@ const routes = {
     if (!inv) return json(res, 404, { error: 'invalid invite' });
     const exp = Date.parse(inv.expiresAt || '');
     if (!Number.isFinite(exp) || exp < Date.now()) return json(res, 410, { error: 'invite expired' });
-    const gym = gymById(inv.gymId);
+    const gym = await gymById(inv.gymId);
     if (!gym) return json(res, 404, { error: 'gym not found' });
     json(res, 200, {
       invite: {
@@ -827,11 +856,11 @@ const routes = {
   'GET /api/me': async (req, res) => {
     const user = readSession(req);
     if (!user) return json(res, 401, { error: 'not signed in' });
-    json(res, 200, { user: publicUser(user) });
+    json(res, 200, { user: await publicUser(user) });
   },
 
   'POST /api/auth/register': async (req, res) => {
-    await bootstrapReady;
+    await ensureBootstrap();
     await initDbIfNeeded();
     await db.loadCache();
     const body = await readBody(req);
@@ -1154,7 +1183,7 @@ const routes = {
       return json(res, 400, { error: 'invalid or expired code' });
     }
     audit(req, 'auth.pair.ok', { user });
-    json(res, 200, { token: makeSession(user), user: publicUser(user) });
+    json(res, 200, { token: makeSession(user), user: await publicUser(user) });
   },
 
   // `rev` is the server's own count of writes to this profile (also stored inside the document as
@@ -1331,7 +1360,7 @@ const routes = {
         live: livePresence(u.id)
       };
     });
-    json(res, 200, { users: usersOut, invite_only: INVITE_ONLY, now: Date.now(), scopeGymId, actor: publicUser(actor) });
+    json(res, 200, { users: usersOut, invite_only: INVITE_ONLY, now: Date.now(), scopeGymId, actor: await publicUser(actor) });
   },
 
   // Drill-down: full workout history + body-weight log for one user.
@@ -1342,7 +1371,7 @@ const routes = {
     if (!u) return json(res, 404, { error: 'no such user' });
     if (!canManageUser(actor, u)) return json(res, 403, { error: 'forbidden' });
     const S = readState(u.id) || {};
-    const gym = gymById(userGymId(u));
+    const gym = await gymById(userGymId(u));
     json(res, 200, {
       user: {
         id: u.id,
@@ -1473,19 +1502,21 @@ const routes = {
         created: g.created || null
       };
     });
-    json(res, 200, { gyms: gymsOut, actor: publicUser(superAdmin), now: Date.now() });
+    json(res, 200, { gyms: gymsOut, actor: await publicUser(superAdmin), now: Date.now() });
   },
 
   'GET /api/admin/platform/users': async (req, res) => {
     if (!requireSuperAdmin(req, res)) return;
     const allUsers = await db.getAllUsers();
+    const gyms = await db.getAllGyms();
+    const gymMap = new Map(gyms.map(g => [g.id, g]));
     const usersOut = allUsers.map(u => ({
       id: u.id,
       name: u.name,
       email: u.email || null,
       username: u.username || null,
       gymId: userGymId(u),
-      gymName: gymById(userGymId(u))?.name || null,
+      gymName: gymMap.get(userGymId(u))?.name || null,
       disabled: !!u.disabled,
       admin: isAdmin(u),
       superadmin: isSuperAdmin(u)
@@ -1528,7 +1559,7 @@ const routes = {
   'POST /api/admin/platform/gyms/update': async (req, res) => {
     const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
     const body = await readBody(req);
-    const gym = gymById(String(body.id || ''));
+    const gym = await gymById(String(body.id || ''));
     if (!gym) return json(res, 404, { error: 'no such gym' });
     const nextName = String(body.name || gym.name).trim().slice(0, 80);
     if (!nextName) return json(res, 400, { error: 'name required' });
@@ -1545,7 +1576,7 @@ const routes = {
   'POST /api/admin/platform/gyms/assign-owner': async (req, res) => {
     const superAdmin = requireSuperAdmin(req, res); if (!superAdmin) return;
     const body = await readBody(req);
-    const gym = gymById(String(body.gymId || ''));
+    const gym = await gymById(String(body.gymId || ''));
     if (!gym) return json(res, 404, { error: 'no such gym' });
     const user = await db.getUserById(String(body.userId || ''));
     if (!user) return json(res, 404, { error: 'no such user' });
@@ -1555,7 +1586,7 @@ const routes = {
     await db.updateGym(gym.id, { ownerId: user.id });
     await db.updateUser({ ...user, gymId: gym.id, admin: true });
     audit(req, 'platform.gym.owner', { user: superAdmin, target: user, msg: gym.id });
-    json(res, 200, { ok: true, gym: { id: gym.id, ownerId: gym.ownerId }, user: publicUser(user) });
+    json(res, 200, { ok: true, gym: { id: gym.id, ownerId: gym.ownerId }, user: await publicUser(user) });
   },
 
   /* ---------- activity log ---------- */
@@ -1649,6 +1680,8 @@ http.createServer(async (req, res) => {
     console.warn('refused cross-origin', key, 'origin=' + req.headers.origin, 'expected=' + ORIGIN);
     return json(res, 403, { error: 'cross-origin request refused' });
   }
+  try { await ensureBootstrap(); }
+  catch { return json(res, 503, { error: 'service not ready' }); }
   try { await handler(req, res); }
   catch (e) {
     console.error(key, e);
