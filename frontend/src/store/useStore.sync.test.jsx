@@ -118,14 +118,14 @@ describe('pull against a revisioned server', () => {
     expect(sync()).toEqual({ rev: 6, ts: 500 })
   })
 
-  it('a 401 on pull leaves the copy, the marker and the user alone', async () => {
+  it('a 401 on pull preserves local data and returns to sign-in', async () => {
     signedIn({ ...clone(DEF), _ts: 100, workouts: [workout('w1')] })
     localStorage.setItem('gym_sync', JSON.stringify({ rev: 1, ts: 100 }))
     api.mockRejectedValueOnce(httpError(401, { error: 'not signed in' }))
 
     await useStore.getState().pullState()
 
-    expect(useStore.getState().user).toEqual({ id: 'user-1' })
+    expect(useStore.getState().user).toBeNull()
     expect(useStore.getState().S.workouts.map(w => w.id)).toEqual(['w1'])
     expect(sync()).toEqual({ rev: 1, ts: 100 })
     expect(localStorage.getItem('gym_dirty')).toBeNull()

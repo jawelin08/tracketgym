@@ -77,6 +77,28 @@ describe('adoptProfile — sign-in takes the server profile', () => {
     expect(puts()[0].state.routines.map(x => x.id).sort()).toEqual(['local-only', 'r1'])
   })
 
+  it('asks before adopting a profile over unsynced edits and keeps those local edits when accepted', async () => {
+    const local = {
+      ...clone(guest), unit: 'kg',
+      workouts: [{ ...workout('w1'), note: 'local edit' }]
+    }
+    signedIn(local)
+    localStorage.setItem('gym_owner', 'user-1')
+    localStorage.setItem('gym_dirty', '1')
+    api.mockResolvedValueOnce({ state: clone(server), rev: 4 })
+    api.mockResolvedValueOnce({ ok: true, rev: 5 })
+    const ask = vi.fn(async () => true)
+
+    await useStore.getState().adoptProfile(ask)
+
+    expect(ask).toHaveBeenCalledWith({
+      workouts: 0, bodyweight: 0, routines: 1, customEx: 0, equipProfiles: 0, gymCards: 0
+    }, { pending: true })
+    expect(useStore.getState().S.unit).toBe('kg')
+    expect(useStore.getState().S.workouts.find(w => w.id === 'w1').note).toBe('local edit')
+    expect(puts()[0].state.unit).toBe('kg')
+  })
+
   it('does not ask when the device has nothing the profile lacks', async () => {
     signedIn({ ...clone(DEF), _ts: 900, unit: 'kg' })
     api.mockResolvedValueOnce({ state: clone(server), rev: 4 })

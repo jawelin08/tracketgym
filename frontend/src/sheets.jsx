@@ -57,10 +57,12 @@ function ConfirmDialog({ title, message, confirmText, cancelText, danger, onConf
 // Sign-in found user-created data on this device that the profile does not have. The profile is
 // the truth — settings and plan come from the server either way — the question is whether these
 // entries are added to it or dropped. Resolves true to add.
-export function askAddDeviceData(extras) {
+export function askAddDeviceData(extras, { pending = false } = {}) {
   return new Promise(resolve => confirmSheet({
     title: t('Add this device\'s data to your profile?'),
-    message: t('This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', extras.workouts, extras.bodyweight, extras.routines, extras.customEx, extras.equipProfiles, extras.gymCards),
+    message: pending
+      ? t('This device has unsynced changes. Add its local data to your profile, or keep the profile exactly as it is on the server.')
+      : t('This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.', extras.workouts, extras.bodyweight, extras.routines, extras.customEx, extras.equipProfiles, extras.gymCards),
     confirmText: t('Add them'), cancelText: t('Keep profile as is'),
     onConfirm: () => resolve(true), onCancel: () => resolve(false), locked: true
   }))

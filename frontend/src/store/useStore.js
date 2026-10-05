@@ -122,11 +122,11 @@ export const useStore = create((set, get) => {
   const setSync = patch => {
     const cur = get().sync
     const next = { ...cur, ...patch }
-    if (next.offline !== cur.offline || next.pending !== cur.pending || next.lastSynced !== cur.lastSynced) set({ sync: next })
+    if (next.offline !== cur.offline || next.pending !== cur.pending || next.lastSynced !== cur.lastSynced || next.error !== cur.error) set({ sync: next })
   }
   const clearDirty = () => {
     localStorage.removeItem('gym_dirty')
-    setSync({ pending: false })
+    setSync({ pending: false, error: null })
   }
   const isNetworkError = e => e && e.status == null   // fetch itself failed: no response at all
 
@@ -232,7 +232,7 @@ export const useStore = create((set, get) => {
       toldTooLarge = false
       // Back from offline with changes that were waiting: say so once — the banner that promised
       // "syncs when you're back online" has just kept its word.
-      setSync({ offline: false, pending: false, lastSynced: Date.now() })
+      setSync({ offline: false, pending: false, error: null, lastSynced: Date.now() })
       if (offlineChanges) {
         offlineChanges = false
         import('./useUI.js').then(({ useUI }) => useUI.getState().toast(t('Back online — synced with the server.'))).catch(() => {})
@@ -241,8 +241,14 @@ export const useStore = create((set, get) => {
       // A session that is gone is boot's business (/api/me) to clear properly, but the banner
       // must say so now — otherwise a revoked/expired session fails every push silently until
       // the app happens to restart, and the device looks "synced" while quietly drifting.
-      if (e.status === 401) { localStorage.setItem('gym_dirty', '1'); setSync({ offline: false, pending: true }); return }
-      if (isNetworkError(e)) { localStorage.setItem('gym_dirty', '1'); offlineChanges = true; setSync({ offline: true, pending: true }); return }
+      if (e.status === 401) {
+        localStorage.setItem('gym_dirty', '1')
+        setSync({ offline: false, pending: true })
+        get().setUser(null)
+        import('./useUI.js').then(({ useUI }) => useUI.getState().toast(t('Session expired — sign in again to sync. Your data is still saved on this device.'))).catch(() => {})
+        return
+      }
+      if (isNetworkError(e)) { localStorage.setItem('gym_dirty', '1'); offlineChanges = true; setSync({ offline: true, pending: true, error: null }); return }
       if (e.status === 409 && e.data && attempt < 2) {
         // Another device wrote since this one last read. The server sent its document along;
         // merge and push once more against that revision. A second refusal in a row leaves the
@@ -251,7 +257,7 @@ export const useStore = create((set, get) => {
         return doPush(attempt + 1)
       }
       localStorage.setItem('gym_dirty', '1')
-      setSync({ offline: false, pending: true })
+      setSync({ offline: false, pending: true, error: `${e.status || 'unknown'}: ${e.message || 'request rejected'}` })
       // A 413 comes from the proxy in front of the API (nginx: client_max_body_size), which
       // caps the request body. Every later push is at least as big, so nothing reaches the
       // server until the limit is raised — said once per refusal streak; gym_dirty keeps the
@@ -466,7 +472,13 @@ export const useStore = create((set, get) => {
           mergeInto(S, state, rev)
           pushPending = false
           await get().pushState()
-        } catch (e) { if (isNetworkError(e)) setSync({ offline: true }) /* keep local; the poll retries */ }
+        } catch (e) {
+          if (e.status === 401) {
+            get().setUser(null)
+            import('./useUI.js').then(({ useUI }) => useUI.getState().toast(t('Session expired — sign in again to sync. Your data is still saved on this device.'))).catch(() => {})
+          } else if (isNetworkError(e)) setSync({ offline: true })
+          else setSync({ offline: false, pending: true, error: `${e.status || 'unknown'}: ${e.message || 'request rejected'}` })
+        }
         finally { pulling = null }
       })()
       return pulling
@@ -492,10 +504,14 @@ export const useStore = create((set, get) => {
         return { adopted: false, added: false }
       }
       const extras = localExtras(S, state)
-      const keep = Object.values(extras).some(Boolean) && typeof ask === 'function' ? await ask(extras) : false
+      const dirtyLocal = localStorage.getItem('gym_dirty') === '1' && localStorage.getItem('gym_owner') === get().user?.id
+      let keep = dirtyLocal && typeof ask !== 'function'
+      if ((Object.values(extras).some(Boolean) || dirtyLocal) && typeof ask === 'function') {
+        keep = dirtyLocal ? await ask(extras, { pending: true }) : await ask(extras)
+      }
       const serverCopy = Object.assign(clone(DEF), state, { active: S.active || null })
       if (keep) {
-        const merged = Object.assign(clone(DEF), mergeStates(state, S, { prefer: 'a' }))
+        const merged = Object.assign(clone(DEF), mergeStates(state, S, { prefer: dirtyLocal ? 'b' : 'a' }))
         merged.active = S.active || null
         persist(merged, false)
         if (rev != null) writeSync(rev, 0)

@@ -12,10 +12,12 @@ export default function SyncBanner() {
   const pullState = useStore(s => s.pullState)
   if (!user || !sync) return null
   if (!sync.offline && !sync.pending) return null
-  const retry = () => { pushState(); pullState() }
+  const retry = () => { pushState().then(() => pullState()) }
   return <button className={'sync-banner' + (sync.offline ? ' off' : '')} onClick={retry}>
     <Icon name={sync.offline ? 'bellSlash' : 'reset'} />
-    <span>{sync.offline
+    <span>{sync.error
+      ? t('Sync failed (HTTP {0}). Your data is still saved on this device. Tap to retry.', sync.error)
+      : sync.offline
       ? (sync.pending ? t('Offline — your changes are saved on this device and sync when you are back online.') : t('Offline — showing the last copy synced with the server.'))
       : t('Not synced yet — tap to retry.')}</span>
   </button>

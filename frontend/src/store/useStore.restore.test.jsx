@@ -19,6 +19,7 @@ const httpError = status => Object.assign(new Error('HTTP ' + status), { status 
 beforeEach(() => {
   localStorage.clear()
   api.mockReset()
+  toast.mockReset()
   useStore.setState({ S: clone(DEF), user: null, ready: false })
 })
 
@@ -334,15 +335,13 @@ describe('push failures', () => {
   it('says once that the server refused the upload as too large, and keeps the copy dirty', async () => {
     useStore.setState({ S: { ...clone(DEF), routines: [routine('local')] }, user: { id: 'user-1' }, ready: true })
 
-    api.mockRejectedValueOnce(httpError(401))
-    await useStore.getState().pushState()
-    expect(localStorage.getItem('gym_dirty')).toBe('1')
-    expect(toast).not.toHaveBeenCalled()
-
     api.mockRejectedValueOnce(httpError(413))
     await useStore.getState().pushState()
     await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(1))
-    expect(toast.mock.calls[0][0]).toMatch(/too large/)
+    expect(localStorage.getItem('gym_dirty')).toBe('1')
+
+    api.mockRejectedValueOnce(httpError(413))
+    await useStore.getState().pushState()
     expect(localStorage.getItem('gym_dirty')).toBe('1')
 
     api.mockRejectedValueOnce(httpError(413))
@@ -357,5 +356,19 @@ describe('push failures', () => {
     api.mockRejectedValueOnce(httpError(413))
     await useStore.getState().pushState()
     await vi.waitFor(() => expect(toast).toHaveBeenCalledTimes(2))
+  })
+
+  it('a 401 returns to sign-in without clearing the unsynced local data', async () => {
+    useStore.setState({ S: { ...clone(DEF), routines: [routine('local')] }, user: { id: 'user-1' }, ready: true })
+    localStorage.setItem('gym_owner', 'user-1')
+    api.mockRejectedValueOnce(httpError(401))
+
+    await useStore.getState().pushState()
+
+    expect(useStore.getState().user).toBeNull()
+    expect(useStore.getState().S.routines.map(r => r.id)).toEqual(['local'])
+    expect(localStorage.getItem('gym_dirty')).toBe('1')
+    await vi.waitFor(() => expect(toast).toHaveBeenCalled())
+    expect(toast.mock.calls[0][0]).toMatch(/Session expired/)
   })
 })
