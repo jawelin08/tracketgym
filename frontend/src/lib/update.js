@@ -9,6 +9,7 @@ import { MOBILE } from './mobile.js'
 
 const GITHUB_REPO = 'jawelin08/tracketgym'
 const RELEASES_URL = `https://api.github.com/repos/${GITHUB_REPO}/releases/latest`
+export const LATEST_RELEASE_PAGE_URL = `https://github.com/${GITHUB_REPO}/releases/latest`
 
 /**
  * Compares two semver strings (e.g. "1.2.11" vs "1.3.0").
@@ -118,7 +119,7 @@ export async function sha256(buffer) {
 export async function downloadAndInstall(url, expectedHash = null, onProgress = null) {
   if (!MOBILE) {
     // On web, just open the release page
-    window.open(`https://github.com/${GITHUB_REPO}/releases`, '_blank', 'noopener')
+    window.open(LATEST_RELEASE_PAGE_URL, '_blank', 'noopener')
     return
   }
 
@@ -166,7 +167,7 @@ export async function downloadAndInstall(url, expectedHash = null, onProgress = 
     reader.readAsDataURL(blob)
   })
 
-  const fileName = 'opengym-update.apk'
+  const fileName = 'nextuin-gym-update.apk'
   await Filesystem.writeFile({
     path: fileName,
     directory: Directory.Cache,

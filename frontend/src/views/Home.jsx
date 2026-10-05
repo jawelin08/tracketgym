@@ -10,6 +10,7 @@ import Icon from '../components/Icon.jsx'
 import { Button } from '../components/ui.jsx'
 import { tappable } from '../lib/use-sheet-keyboard.js'
 import { glyphOf } from '../lib/glyphs.js'
+import NextuinMark from '../components/NextuinMark.jsx'
 
 // Home = what to do now + a quick glance. Deep charts & history live in Stats.
 export default function Home() {
@@ -63,8 +64,8 @@ export default function Home() {
   return <div className="narrow">
     <div className="hdr">
       <div>
-        <div className="brandline"><span className="brand-mark">N</span><span>neXtuin <i>openGym</i></span></div>
-        <h1>{user ? t('Hi {0}', user.name) : 'GYMTracker'}</h1>
+        <div className="brandline"><span className="brand-mark"><NextuinMark /></span><span>neXtuin <i>openGym</i></span></div>
+        <h1>{user ? t('Hi {0}', user.name) : 'Nextuin Gym'}</h1>
         <div className="sub">{today.toLocaleDateString(dateLocale(), { weekday: 'long', day: 'numeric', month: 'long' })}</div>
       </div>
       <button className="iconbtn" onClick={() => nav('/settings')} aria-label={t('Settings')}><Icon name="gear" /></button>

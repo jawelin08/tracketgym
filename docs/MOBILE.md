@@ -48,6 +48,21 @@ or Settings → **"Connect to my server"** later) to finish. Notes:
   is enough to run the app on your own iPhone (see below); paid membership is only needed
   for App Store distribution, which openGym doesn't do.
 
+### Android permissions
+
+Nextuin Gym asks only when you use the related feature:
+
+- Camera access appears when you choose to scan a gym check-in code. Importing a saved
+  image does not require camera access.
+- Notification access appears when you enable workout-day reminders or first use rest-timer
+  alerts. On Android 12 and later, Android may also open its **Alarms & reminders** setting
+  when enabling workout-day reminders so they can arrive at the selected time; if declined,
+  reminders may be delayed.
+- The **Allow from this source** setting appears only when you choose to install an APK
+  update from inside the app. Android requires this separate setting for sideloading.
+- Internet access is a normal Android permission and does not show a prompt. App data uses
+  private app storage, so no broad storage permission is requested.
+
 ## Build & run
 
 ```sh
@@ -67,12 +82,12 @@ into both native projects — re-run it after every web-code change before build
 
 ## App icons & splash screens
 
-`frontend/resources/icon.svg` is the 1024×1024 source (the app's dumbbell glyph on the
-app background). Generate all platform assets from it on a machine with the tooling:
+`frontend/resources/icon.svg` is the 1024×1024 source (Nextuin's gradient N combined with
+a dumbbell mark). Generate all platform assets from it on a machine with the tooling:
 
 ```sh
 cd frontend
-npx @capacitor/assets generate --iconBackgroundColor '#0c0e12' --splashBackgroundColor '#0c0e12'
+npx @capacitor/assets generate --iconBackgroundColor '#070b16' --splashBackgroundColor '#070b16'
 ```
 
 (If the generator won't take the SVG directly, export it to `resources/icon.png` at
@@ -85,7 +100,8 @@ accounts, no store rules, no yearly fees between you and an open-source app.
 
 ### Android — sideload the APK
 
-The official signed APK is in four places, all the same file:
+The upstream openGym APK is in four places, all the same file. **Those binaries are not
+Nextuin Gym builds and cannot update the Nextuin Gym app.**
 
 - **[opengym.duarte-santos.ch](https://opengym.duarte-santos.ch)** — the download page.
 - **[GitLab's package registry](https://gitlab.com/DuarteSantos8/opengym/-/packages)** — every
@@ -99,9 +115,16 @@ The official signed APK is in four places, all the same file:
 Android asks you to allow installs from the browser the first time — that's standard for any
 app outside the Play Store. Check the `.sha256` if you got the file from anywhere else.
 
-The browser app's **Settings → Download openGym** section checks releases in this repository
-and links only to APK/IPA files attached to a published release. Until a branded release is
-published, both download cards remain unavailable rather than pointing at the upstream app.
+### Nextuin Gym APK
+
+Download the branded Android app from the
+[latest Nextuin Gym release](https://github.com/jawelin08/tracketgym/releases/latest).
+The package ID is `es.nextuin.gym`; its signing key is separate from upstream openGym's.
+Keep using the same Nextuin key for future APKs so Android accepts them as updates.
+
+The browser app's **Settings → Download Nextuin Gym** section checks releases in this repository
+and links to the latest APK/IPA assets. If GitHub's API is temporarily unavailable, the Android
+card still opens the public releases page. It never links to an APK from the upstream project.
 An unsigned iOS IPA must be signed with AltStore or Sideloadly before it can be installed;
 building one requires a macOS runner and the `IOS_RUNNER_TAG` CI variable below.
 
@@ -181,6 +204,6 @@ membership, the distribution certificate and profile as protected file variables
 - **License:** openGym is AGPL-3.0, which by itself sits badly with app-store terms of
   service. `NOTICE.md` carries an app-store exception (an additional permission under
   AGPL §7) granted by the copyright holder — relevant only if store distribution ever happens.
-- The app requests notification permission only when the workout-day reminder is switched
-  on, and (on Android) declares `SCHEDULE_EXACT_ALARM` so the reminder fires to the minute
-  where the user allows it.
+- Notification permission is requested when the user enables a workout-day reminder or starts
+  a rest timer that needs an alert. On Android, exact-alarm access is requested only when
+  enabling a reminder; if denied, reminders still work but may arrive late.

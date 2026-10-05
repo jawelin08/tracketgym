@@ -4,8 +4,20 @@
       <stop offset="0" stop-color="#42c9ff"/>
       <stop offset="1" stop-color="#9b70ff"/>
     </linearGradient>
+    <radialGradient id="glow">
+      <stop offset="0" stop-color="#647cff" stop-opacity=".24"/>
+      <stop offset="1" stop-color="#647cff" stop-opacity="0"/>
+    </radialGradient>
   </defs>
-  <rect width="512" height="512" fill="#070b16"/>
+  <rect width="512" height="512" rx="112" fill="#070b16"/>
+  <circle cx="256" cy="256" r="218" fill="url(#glow)"/>
   <circle cx="256" cy="256" r="190" fill="none" stroke="url(#nextuin)" stroke-opacity=".3" stroke-width="3"/>
-  <path fill="url(#nextuin)" d="M148 354V158h62l92 124V158h62v196h-60l-94-126v126z"/>
+  <path d="M104 256h304" fill="none" stroke="url(#nextuin)" stroke-linecap="round" stroke-opacity=".48" stroke-width="13"/>
+  <g fill="url(#nextuin)">
+    <rect x="78" y="202" width="25" height="108" rx="12.5"/>
+    <rect x="111" y="221" width="25" height="70" rx="12.5"/>
+    <rect x="376" y="221" width="25" height="70" rx="12.5"/>
+    <rect x="409" y="202" width="25" height="108" rx="12.5"/>
+    <path d="M148 354V158h62l92 124V158h62v196h-60l-94-126v126z"/>
+  </g>
 </svg>

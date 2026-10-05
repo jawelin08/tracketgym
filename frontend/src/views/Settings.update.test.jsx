@@ -8,8 +8,8 @@ globalThis.IS_REACT_ACT_ENVIRONMENT = true
 
 // The updater downloads an .apk and hands it to the Android package installer, so its row
 // may only ever show on the native Android build: never on the web, never on iOS. Each test
-// flips the two gates (MOBILE flag, Capacitor platform) and watches whether Settings even
-// asks gitlab.com for the latest release.
+// flips the two gates (MOBILE flag, Capacitor platform) and watches which release lookup
+// Settings uses for the web download card and native updater.
 const mocks = vi.hoisted(() => {
   const state = { S: null, MOBILE: false, android: false }
   state.snapshot = () => ({
@@ -24,6 +24,14 @@ const mocks = vi.hoisted(() => {
     signOut: vi.fn(), signOutAll: vi.fn(), resetDemo: vi.fn(), disconnectServer: vi.fn(),
   })
   state.checkForUpdate = vi.fn(() => Promise.resolve({ hasUpdate: true, latestVersion: '9.9.9', apkUrl: 'https://x/opengym.apk', hashUrl: null }))
+  state.checkForDownloads = vi.fn(() => Promise.resolve({
+    releaseAvailable: true,
+    latestVersion: '1.3.8',
+    apkUrl: 'https://github.com/jawelin08/tracketgym/releases/download/v1.3.8/Nextuin-Gym-1.3.8.apk',
+    iosUrl: null,
+    iosError: null,
+  }))
+  state.latestReleasePageUrl = 'https://github.com/jawelin08/tracketgym/releases/latest'
   state.confirmSheet = vi.fn()
   return state
 })
@@ -52,6 +60,8 @@ vi.mock('../lib/mobile.js', () => ({
 }))
 vi.mock('../lib/update.js', () => ({
   checkForUpdate: (...a) => mocks.checkForUpdate(...a),
+  checkForDownloads: (...a) => mocks.checkForDownloads(...a),
+  LATEST_RELEASE_PAGE_URL: mocks.latestReleasePageUrl,
   downloadAndInstall: vi.fn(),
 }))
 vi.mock('./MobileOnboarding.jsx', () => ({ ConnectSheet: () => null }))
@@ -71,6 +81,7 @@ beforeEach(() => {
   mocks.MOBILE = false
   mocks.android = false
   mocks.checkForUpdate.mockClear()
+  mocks.checkForDownloads.mockClear()
   mocks.confirmSheet.mockClear()
   host = document.createElement('div')
   document.body.appendChild(host)
@@ -86,26 +97,39 @@ const mount = async () => {
   await act(async () => { root.render(<Settings />) })
   await act(async () => { await Promise.resolve(); await Promise.resolve() })
 }
-const updateRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Update to openGym v9.9.9'))
+const updateRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Update to Nextuin Gym v9.9.9'))
 const checkRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Check for updates'))
-const webRow = () => [...host.querySelectorAll('.lrow')].find(r => r.textContent.includes('Android APK coming soon'))
+const webAndroidCard = () => [...host.querySelectorAll('.app-download-card')].find(r => r.textContent.includes('Android · APK'))
 
 describe('Settings — in-app update check', () => {
-  it('web build: never asks for releases; the Updates section points at the APK instead', async () => {
+  it('web build: checks the branded release and links the latest APK directly', async () => {
     await mount()
+    expect(mocks.checkForDownloads).toHaveBeenCalledTimes(1)
     expect(mocks.checkForUpdate).not.toHaveBeenCalled()
     expect(updateRow()).toBeUndefined()
     expect(checkRow()).toBeUndefined()
-    expect(webRow()).toBeTruthy()
+    expect(host.textContent).toContain('Download Nextuin Gym')
+    expect(webAndroidCard()?.getAttribute('href')).toBe(
+      'https://github.com/jawelin08/tracketgym/releases/download/v1.3.8/Nextuin-Gym-1.3.8.apk',
+    )
+  })
+
+  it('web build: links the public releases page while the lookup is unavailable', async () => {
+    mocks.checkForDownloads.mockRejectedValueOnce(new Error('offline'))
+
+    await mount()
+
+    expect(webAndroidCard()?.getAttribute('href')).toBe(mocks.latestReleasePageUrl)
   })
 
   it('mobile build on iOS: no check, no row, no section', async () => {
     mocks.MOBILE = true
     await mount()
+    expect(mocks.checkForDownloads).not.toHaveBeenCalled()
     expect(mocks.checkForUpdate).not.toHaveBeenCalled()
     expect(updateRow()).toBeUndefined()
     expect(checkRow()).toBeUndefined()
-    expect(webRow()).toBeUndefined()
+    expect(webAndroidCard()).toBeUndefined()
   })
 
   it('mobile build on Android: checks once and shows the row, tapping it asks before downloading', async () => {
@@ -133,7 +157,7 @@ describe('Settings — in-app update check', () => {
     expect(updateRow()).toBeTruthy()   // the second (default) answer had 9.9.9 — the row now offers it
   })
 
-  it('Android when gitlab.com is unreachable: stays quiet, keeps the row', async () => {
+  it('Android when GitHub is unreachable: stays quiet, keeps the row', async () => {
     mocks.MOBILE = true
     mocks.android = true
     mocks.checkForUpdate.mockRejectedValueOnce(new Error('offline'))

@@ -13,7 +13,7 @@ import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, LANGS, INSTR_LANGS } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, syncReminder } from '../lib/mobile.js'
-import { checkForDownloads, checkForUpdate, downloadAndInstall } from '../lib/update.js'
+import { checkForDownloads, checkForUpdate, downloadAndInstall, LATEST_RELEASE_PAGE_URL } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
 import {
   spotifyClientConfigured,
@@ -545,7 +545,7 @@ export default function Settings() {
         subtitle={t('to install openGym as a full-screen app.') + ' ' + (user ? t('Your data syncs with your profile — sign in anywhere to see it.') : t('Guest data stays on this device — export a backup now and then!'))} />
     </Section>}
 
-    {!MOBILE && <Section title={t('Download openGym')}
+    {!MOBILE && <Section title={t('Download Nextuin Gym')}
       footer={downloadInfo?.iosUrl
         ? t('The iOS IPA is unsigned and needs AltStore or Sideloadly.')
         : downloadsError
@@ -555,8 +555,8 @@ export default function Settings() {
         <PlatformDownload platform="android" title={t('Android · APK')}
           subtitle={downloadInfo?.apkUrl
             ? t('Latest version · v{0}', downloadInfo.latestVersion)
-            : checkingDownloads ? t('Checking…') : t('No APK is published yet.')}
-          href={downloadInfo?.apkUrl} action={t('Download')} />
+            : checkingDownloads ? t('Checking…') : t('Download the latest APK from GitHub.')}
+          href={downloadInfo?.apkUrl || LATEST_RELEASE_PAGE_URL} action={t('Download')} />
         <PlatformDownload platform="ios" title={t('iOS · IPA')}
           subtitle={downloadInfo?.iosUrl
             ? t('Latest version · v{0}', downloadInfo.iosVersion)
@@ -570,7 +570,7 @@ export default function Settings() {
     {MOBILE && android && <Section title={t('Updates')}
       footer={t('Updates come from this repository’s GitHub releases; APK checksums are verified before installation.')}>
       <Row icon="download" iconTint="var(--acc)"
-        title={updateInfo?.hasUpdate ? t('Update to openGym v{0}', updateInfo.latestVersion) : t('Check for updates')}
+        title={updateInfo?.hasUpdate ? t('Update to Nextuin Gym v{0}', updateInfo.latestVersion) : t('Check for updates')}
         subtitle={checking ? t('Checking…') : t('You have v{0}', __APP_VERSION__)}
         accessory="chevron"
         onClick={() => (updateInfo?.hasUpdate ? onUpdateRowClick() : checkNow())} />
@@ -733,7 +733,9 @@ function MobileReminderCard({ S, update, toast }) {
   }
   return (
     <Section title={t('Notifications')}
-      footer={S.reminder?.on ? t('Reminds you at this time on days that have a routine planned.') : null}>
+      footer={S.reminder?.on
+        ? t('Reminds you at this time on days that have a routine planned.')
+        : t('Android will ask for notification access when you enable this. Exact timing may need Alarms & reminders access.')}>
       <Row icon="calendar" iconTint="var(--orange)" title={t('Workout day reminder')}>
         <Switch checked={!!S.reminder?.on} onChange={toggle} />
       </Row>

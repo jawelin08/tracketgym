@@ -1424,6 +1424,12 @@ body::before {
   letter-spacing: -.08em;
   animation: nextuin-mark 5s ease-in-out infinite;
 }
+.nextuin-mark {
+  display: block;
+  width: 1em;
+  height: 1em;
+  fill: currentColor;
+}
 
 @keyframes nextuin-mark {
   0%, 100% { box-shadow: 0 0 12px rgba(105, 127, 255, .25); }

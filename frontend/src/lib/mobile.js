@@ -141,6 +141,13 @@ export async function syncReminder(S, interactive = false) {
     let perm = await LocalNotifications.checkPermissions()
     if (perm.display !== 'granted' && interactive) perm = await LocalNotifications.requestPermissions()
     if (perm.display !== 'granted') return false
+    if (interactive) {
+      const { Capacitor } = await import('@capacitor/core')
+      if (Capacitor.getPlatform() === 'android') {
+        const exact = await LocalNotifications.checkExactNotificationSetting()
+        if (exact.exact_alarm !== 'granted') await LocalNotifications.changeExactNotificationSetting()
+      }
+    }
     const notifications = buildReminderNotifications(S)
     if (notifications.length) await LocalNotifications.schedule({ notifications })
     return true
