@@ -20,6 +20,7 @@ import { startWarmup } from './coach/warmup.js';
 import { dayReminderPush, restTimerPush, testPush } from './push-messages.js';
 import { verifyError } from './verify-error.js';
 import { db, pool, getUserByIdSync } from './db.js';
+import { atomicWrite } from './atomic-write.js';
 
 const PORT = +(process.env.PORT || 3000);
 const DATA = process.env.DATA_DIR || '/data';
