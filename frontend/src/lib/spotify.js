@@ -191,7 +191,8 @@ export async function spotifyNowPlaying(auth) {
 }
 
 export async function spotifyAction(action, auth) {
-  await spotifyApi('/me/player/' + action, { method: 'POST' }, auth)
+  const method = action === 'play' || action === 'pause' ? 'PUT' : 'POST'
+  await spotifyApi('/me/player/' + action, { method }, auth)
 }
 
 export function spotifyOpenYouTubeMusic() {
