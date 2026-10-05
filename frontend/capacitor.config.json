@@ -1,6 +1,6 @@
 {
-  "appId": "ch.duartesantos.opengym",
-  "appName": "openGym",
+  "appId": "es.nextuin.gym",
+  "appName": "Nextuin Gym",
   "webDir": "dist",
   "backgroundColor": "#0c0e12",
   "android": {

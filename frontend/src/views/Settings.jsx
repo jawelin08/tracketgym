@@ -13,7 +13,7 @@ import { wakeLockSupported } from '../lib/wakelock.js'
 import { t, LANGS, INSTR_LANGS } from '../lib/i18n.js'
 import { DEMO, REPO } from '../lib/demo.js'
 import { MOBILE, isAndroid, shareExport, syncReminder } from '../lib/mobile.js'
-import { checkForUpdate, downloadAndInstall } from '../lib/update.js'
+import { checkForDownloads, checkForUpdate, downloadAndInstall } from '../lib/update.js'
 import { forgetCoach } from '../lib/coach-api.js'
 import {
   spotifyClientConfigured,
@@ -29,6 +29,31 @@ import { ConnectSheet } from './MobileOnboarding.jsx'
 import { starterPlanSheet, confirmSheet, importFromApp, importFromHevy, equipmentProfileSheet, menuSheet, askAddDeviceData } from '../sheets.jsx'
 import Icon from '../components/Icon.jsx'
 import { Section, Row, SelectRow, Switch, Segmented, Button, TextField } from '../components/ui.jsx'
+
+function PlatformLogo({ platform }) {
+  return (
+    <svg className="app-platform-mark" viewBox="0 0 24 24" aria-hidden="true">
+      {platform === 'ios'
+        ? <path fill="currentColor" d="M17.2 6.1c.7-.8 1.1-1.8 1-2.8-1 .1-2 .7-2.7 1.5-.6.7-1.1 1.8-1 2.7 1 .1 2-.5 2.7-1.4ZM20 16.6c-.6 1.3-.9 1.9-1.6 3-.8 1.1-1.8 2.5-3.1 2.5-1.1 0-1.5-.7-3.1-.7s-2 .7-3.1.7c-1.3 0-2.3-1.3-3.1-2.5-2.2-3.2-2.4-7.1-1.1-9.3.9-1.6 2.5-2.6 4.2-2.6 1.3 0 2.3.8 3.1.8s1.9-.9 3.5-.8c1.4.1 2.8.8 3.7 2-.1.1-2.2 1.3-2.2 3.8 0 2.1 1.8 3.1 2.8 3.1Z" />
+        : <><path fill="currentColor" d="M5.1 9.1a6.9 6.9 0 0 1 13.8 0H5.1ZM4.2 10.2h15.6v7a2 2 0 0 1-2 2h-1.1v2h-1.8v-2h-5.8v2H7.3v-2H6.2a2 2 0 0 1-2-2v-7Z" /><path fill="none" stroke="currentColor" strokeLinecap="round" strokeWidth="1.5" d="m7.3 5.1-1.6-2m11 2 1.6-2" /><circle cx="8.9" cy="7.8" r=".65" fill="var(--surface)" /><circle cx="15.1" cy="7.8" r=".65" fill="var(--surface)" /></>}
+    </svg>
+  )
+}
+
+function PlatformDownload({ platform, title, subtitle, href, action }) {
+  const Tag = href ? 'a' : 'div'
+  return (
+    <Tag className={'app-download-card' + (href ? '' : ' disabled')}
+      href={href || undefined} aria-disabled={!href || undefined}>
+      <span className="app-download-icon"><PlatformLogo platform={platform} /></span>
+      <span className="app-download-copy">
+        <span className="app-download-title">{title}</span>
+        <span className="app-download-sub">{subtitle}</span>
+      </span>
+      <span className="app-download-action">{href ? <><Icon name="download" />{action}</> : action}</span>
+    </Tag>
+  )
+}
 
 export default function Settings() {
   const nav = useNavigate()
@@ -58,6 +83,9 @@ export default function Settings() {
 
   // --- update check state ---
   const [updateInfo, setUpdateInfo] = useState(null) // { hasUpdate, latestVersion, apkUrl, hashUrl } | null
+  const [downloadInfo, setDownloadInfo] = useState(null)
+  const [downloadsError, setDownloadsError] = useState(null)
+  const [checkingDownloads, setCheckingDownloads] = useState(!MOBILE)
   const [android, setAndroid] = useState(false)
   const [checking, setChecking] = useState(false)
   const [spotifyAuth, setSpotifyAuth] = useState(() => getSpotifyAuth())
@@ -109,12 +137,27 @@ export default function Settings() {
   }
 
   useEffect(() => {
-    // The in-app updater installs an .apk, so it only applies to the native Android build.
-    // On iOS and the web this check is skipped and the update row never appears. isAndroid()
-    // already answers false off the mobile build; the MOBILE check on top keeps the web bundle
-    // from even asking (and from calling gitlab.com on every Settings visit).
-    if (!MOBILE) return
-    isAndroid().then(ok => { setAndroid(ok); if (ok) checkForUpdate().then(setUpdateInfo).catch(() => {}) })
+    if (MOBILE) {
+      let cancelled = false
+      isAndroid().then(ok => {
+        if (cancelled) return
+        setAndroid(ok)
+        if (ok) checkForUpdate().then(setUpdateInfo).catch(() => {})
+      })
+      return () => { cancelled = true }
+    }
+
+    let cancelled = false
+    setCheckingDownloads(true)
+    checkForDownloads()
+      .then(info => {
+        if (cancelled) return
+        setDownloadInfo(info)
+        setDownloadsError(info.iosError)
+      })
+      .catch(e => { if (!cancelled) setDownloadsError(e.message || t('Could not check app downloads.')) })
+      .finally(() => { if (!cancelled) setCheckingDownloads(false) })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -137,14 +180,15 @@ export default function Settings() {
   }, [spotifyAuth])
 
   // The same check, on demand: the automatic one is silent when it finds nothing or cannot
-  // reach gitlab.com, and a person who taps "Check for updates" deserves an answer either way.
+  // reach GitHub, and a person who taps "Check for updates" deserves an answer either way.
   const checkNow = async () => {
     if (checking) return
     setChecking(true)
     try {
       const info = await checkForUpdate()
       setUpdateInfo(info)
-      if (!info.hasUpdate) toast(t('You have the latest version.'))
+      if (!info.releaseAvailable) toast(t('No release has been published yet.'))
+      else if (!info.hasUpdate) toast(t('You have the latest version.'))
     } catch {
       toast(t('Could not check for updates — are you online?'))
     }
@@ -191,7 +235,7 @@ export default function Settings() {
       })
     } else {
       // Update available but no APK asset — open the releases page
-      window.open('https://gitlab.com/DuarteSantos8/opengym/-/releases', '_blank', 'noopener')
+      window.open('https://github.com/jawelin08/tracketgym/releases', '_blank', 'noopener')
     }
   }
 
@@ -465,7 +509,7 @@ export default function Settings() {
         <span className="lrow-t">{t('Accent color')}</span>
         <div className="swatches">
           {Object.entries(ACCENTS).map(([k, c]) => (
-            <button key={k} className={'swatch' + ((S.accent || 'lime') === k ? ' on' : '')}
+            <button key={k} className={'swatch' + ((S.accent || 'nextuin') === k ? ' on' : '')}
               style={{ background: c }} onClick={() => update(s => { s.accent = k })} aria-label={k} />
           ))}
         </div>
@@ -501,19 +545,35 @@ export default function Settings() {
         subtitle={t('to install openGym as a full-screen app.') + ' ' + (user ? t('Your data syncs with your profile — sign in anywhere to see it.') : t('Guest data stays on this device — export a backup now and then!'))} />
     </Section>}
 
-    {/* ---------- updates: the last thing on the page ----------
-        Android checks and installs releases in-app. On the web, updates ship with the server,
-        and the APK is announced here once available. iOS has no APK. */}
-    {(!MOBILE || android) && <Section title={t('Updates')}
-      footer={MOBILE ? t('Releases are checked on gitlab.com. The download is verified against its checksum before the installer opens.') : t('The web app updates together with your server. The Android APK will be available here soon.')}>
-      {MOBILE
-        ? <Row icon="download" iconTint="var(--acc)"
-            title={updateInfo?.hasUpdate ? t('Update to openGym v{0}', updateInfo.latestVersion) : t('Check for updates')}
-            subtitle={checking ? t('Checking…') : t('You have v{0}', __APP_VERSION__)}
-            accessory="chevron"
-            onClick={() => (updateInfo?.hasUpdate ? onUpdateRowClick() : checkNow())} />
-        : <Row icon="download" iconTint="var(--acc)" title={t('Android APK coming soon')}
-            subtitle={t('The download link will be published soon.')} />}
+    {!MOBILE && <Section title={t('Download openGym')}
+      footer={downloadInfo?.iosUrl
+        ? t('The iOS IPA is unsigned and needs AltStore or Sideloadly.')
+        : downloadsError
+          ? t('Could not check app downloads.')
+          : t('The iOS IPA will appear here once an iOS build is published.')}>
+      <div className="app-download-list">
+        <PlatformDownload platform="android" title={t('Android · APK')}
+          subtitle={downloadInfo?.apkUrl
+            ? t('Latest version · v{0}', downloadInfo.latestVersion)
+            : checkingDownloads ? t('Checking…') : t('No APK is published yet.')}
+          href={downloadInfo?.apkUrl} action={t('Download')} />
+        <PlatformDownload platform="ios" title={t('iOS · IPA')}
+          subtitle={downloadInfo?.iosUrl
+            ? t('Latest version · v{0}', downloadInfo.iosVersion)
+            : checkingDownloads ? t('Checking…')
+              : downloadsError ? t('Could not check availability.')
+                : t('No iOS IPA has been published yet.')}
+          href={downloadInfo?.iosUrl} action={t('Download')} />
+      </div>
+    </Section>}
+
+    {MOBILE && android && <Section title={t('Updates')}
+      footer={t('Updates come from this repository’s GitHub releases; APK checksums are verified before installation.')}>
+      <Row icon="download" iconTint="var(--acc)"
+        title={updateInfo?.hasUpdate ? t('Update to openGym v{0}', updateInfo.latestVersion) : t('Check for updates')}
+        subtitle={checking ? t('Checking…') : t('You have v{0}', __APP_VERSION__)}
+        accessory="chevron"
+        onClick={() => (updateInfo?.hasUpdate ? onUpdateRowClick() : checkNow())} />
     </Section>}
 
     {/* The version, at the bottom of Settings — which is where the support template has been

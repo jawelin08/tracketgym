@@ -1,5 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
-import { checkForUpdate, sha256, resetUpdateCheck } from './update.js'
+import { checkForDownloads, checkForUpdate, sha256, resetUpdateCheck } from './update.js'
 
 // __APP_VERSION__ is defined at build time by vite.config.js (reads package.json).
 // In the test environment vitest applies the same define, so it's available here.
@@ -43,6 +43,7 @@ describe('checkForUpdate', () => {
     mockFetch([{ tag_name: 'v' + __APP_VERSION__, assets: { links: [] } }])
     const result = await checkForUpdate()
     expect(result.hasUpdate).toBe(false)
+    expect(result.releaseAvailable).toBe(true)
     expect(result.latestVersion).toBe(__APP_VERSION__)
     expect(result.apkUrl).toBe(null)
     expect(result.hashUrl).toBe(null)
@@ -52,6 +53,7 @@ describe('checkForUpdate', () => {
     mockFetch([{ tag_name: 'v0.0.1', assets: { links: [] } }])
     const result = await checkForUpdate()
     expect(result.hasUpdate).toBe(false)
+    expect(result.releaseAvailable).toBe(true)
     expect(result.latestVersion).toBe('0.0.1')
   })
 
@@ -138,10 +140,7 @@ describe('checkForUpdate', () => {
     expect(result.hashUrl).toBe('https://example.com/checksum.txt')
   })
 
-  // The exact JSON gitlab.com returns for GET /projects/85678327/releases?per_page=1 (v1.3.1,
-  // fetched 2026-09-05, description and commit trimmed). The CI publishes the APK and its
-  // checksum as generic-package links, and the checksum link is listed BEFORE the APK — the
-  // detection must not confuse the two.
+  // GitLab's legacy release shape is still accepted for a mirrored release during migration.
   const REAL_RELEASE = [
     {
       "tag_name": "v1.3.1",
@@ -193,7 +192,7 @@ describe('checkForUpdate', () => {
     }
   ]
 
-  it('finds the APK and its checksum in a real gitlab.com release payload', async () => {
+  it('finds the APK and its checksum in a legacy GitLab release payload', async () => {
     mockFetch(REAL_RELEASE)
     const result = await checkForUpdate()
     expect(result.latestVersion).toBe('1.3.1')
@@ -220,7 +219,7 @@ describe('checkForUpdate', () => {
 
   it('throws when the API responds with an error status', async () => {
     mockFetch(null, 500)
-    await expect(checkForUpdate()).rejects.toThrow('GitLab API 500')
+    await expect(checkForUpdate()).rejects.toThrow('GitHub API 500')
   })
 
   it('throws on network failure', async () => {
@@ -278,5 +277,59 @@ describe('semver comparison (via checkForUpdate behavior)', () => {
     // minus one on the minor when possible.
     mockRelease('v' + [MAJ, Math.max(0, MIN - 1), 0].join('.'))
     expect((await checkForUpdate()).hasUpdate).toBe(false)
+  })
+})
+
+describe('checkForDownloads', () => {
+  let originalFetch
+  beforeEach(() => { originalFetch = globalThis.fetch; resetUpdateCheck() })
+  afterEach(() => { globalThis.fetch = originalFetch })
+
+  function mockRelease(assets, status = 200) {
+    globalThis.fetch = vi.fn(() => Promise.resolve({
+      ok: status >= 200 && status < 300,
+      status,
+      json: () => Promise.resolve({
+        tag_name: 'v2.3.4',
+        assets,
+      }),
+    }))
+  }
+
+  it('returns only branded APK and iOS files attached to this repository release', async () => {
+    mockRelease([
+      { name: 'Nextuin-Gym-2.3.4.apk', browser_download_url: 'https://example.com/Nextuin-Gym-2.3.4.apk' },
+      { name: 'Nextuin-Gym-2.3.4.apk.sha256', browser_download_url: 'https://example.com/Nextuin-Gym-2.3.4.apk.sha256' },
+      { name: 'Nextuin-Gym-2.3.4-unsigned.ipa', browser_download_url: 'https://example.com/Nextuin-Gym-2.3.4-unsigned.ipa' },
+    ])
+    const result = await checkForDownloads()
+    expect(result.apkUrl).toBe('https://example.com/Nextuin-Gym-2.3.4.apk')
+    expect(result.latestVersion).toBe('2.3.4')
+    expect(result.iosUrl).toBe('https://example.com/Nextuin-Gym-2.3.4-unsigned.ipa')
+    expect(result.iosVersion).toBe('2.3.4')
+    expect(result.iosError).toBe(null)
+  })
+
+  it('keeps Android available while no iOS IPA is attached', async () => {
+    mockRelease([{ name: 'Nextuin-Gym-2.3.4.apk', browser_download_url: 'https://example.com/Nextuin-Gym-2.3.4.apk' }])
+    const result = await checkForDownloads()
+    expect(result.apkUrl).toBe('https://example.com/Nextuin-Gym-2.3.4.apk')
+    expect(result.iosUrl).toBe(null)
+    expect(result.iosVersion).toBe(null)
+    expect(result.iosError).toBe(null)
+  })
+
+  it('keeps both links unavailable until this repository has a release', async () => {
+    globalThis.fetch = vi.fn(() => Promise.resolve({
+      ok: false,
+      status: 404,
+      json: () => Promise.resolve(null),
+    }))
+    const result = await checkForDownloads()
+    expect(result.apkUrl).toBe(null)
+    expect(result.latestVersion).toBe(__APP_VERSION__)
+    expect(result.releaseAvailable).toBe(false)
+    expect(result.iosUrl).toBe(null)
+    expect(result.iosVersion).toBe(null)
   })
 })

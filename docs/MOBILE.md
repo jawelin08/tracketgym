@@ -99,6 +99,12 @@ The official signed APK is in four places, all the same file:
 Android asks you to allow installs from the browser the first time — that's standard for any
 app outside the Play Store. Check the `.sha256` if you got the file from anywhere else.
 
+The browser app's **Settings → Download openGym** section checks releases in this repository
+and links only to APK/IPA files attached to a published release. Until a branded release is
+published, both download cards remain unavailable rather than pointing at the upstream app.
+An unsigned iOS IPA must be signed with AltStore or Sideloadly before it can be installed;
+building one requires a macOS runner and the `IOS_RUNNER_TAG` CI variable below.
+
 Both come out of CI: the `build:apk` job in [`.gitlab-ci.yml`](../.gitlab-ci.yml) runs
 `npm run build:mobile` and `./gradlew assembleRelease`, then `zipalign`s and signs the result
 with the release key. The job runs on every push to `main` too, so the newest unreleased
@@ -116,14 +122,29 @@ To build and sign your own:
 cd frontend && npm run build:mobile
 cd android && ./gradlew assembleRelease            # → app/build/outputs/apk/release/app-release-unsigned.apk
 
-# one-time: create a keystore. KEEP IT — updates must be signed with the same key,
-# or Android refuses to install the new version over the old one.
-keytool -genkeypair -keystore my.keystore -alias opengym -keyalg RSA -validity 10950
+# one-time: create a Nextuin release keystore. Keep it and its password safe:
+# every future update must use this exact key or Android refuses to install it.
+mkdir -p ~/.config/nextuin/android
+keytool -genkeypair -v \
+  -keystore ~/.config/nextuin/android/nextuin-release.jks \
+  -alias nextuin -keyalg RSA -keysize 3072 -validity 10000 \
+  -dname "CN=Nextuin Gym, OU=Mobile Applications, O=Nextuin Incorporation"
 
 # align + sign (zipalign/apksigner ship with the Android SDK build-tools)
 zipalign -f -p 4 app-release-unsigned.apk aligned.apk
-apksigner sign --ks my.keystore --ks-key-alias opengym --out openGym.apk aligned.apk
+apksigner sign \
+  --ks ~/.config/nextuin/android/nextuin-release.jks \
+  --ks-key-alias nextuin --out Nextuin-Gym.apk aligned.apk
+apksigner verify --verbose --print-certs Nextuin-Gym.apk
 ```
+
+The Android application ID is `es.nextuin.gym`, so this is a separate app from
+`ch.duartesantos.opengym` and can be installed alongside it. The self-signed Android
+certificate identifies the signing key; its `Nextuin Incorporation` subject is a label,
+not independent legal verification of the company. Never commit the keystore or its
+password. For CI releases, configure the protected `ANDROID_KEYSTORE_B64`,
+`ANDROID_KEYSTORE_PASSWORD`, and `ANDROID_KEY_ALIAS` variables using this same key
+(`nextuin`); replacing the key later prevents in-place app updates.
 
 ### iPhone — what's actually possible
 

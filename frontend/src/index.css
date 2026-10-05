@@ -1286,19 +1286,19 @@ body.chips-dragging *{cursor:inherit}
    ------------------------------------------------------------------------ */
 
 :root {
-  --bg: #0b1117;
-  --bg-el: #111a22;
-  --surface: #15202b;
-  --surface-2: #1b2a37;
-  --surface-3: #243546;
+  --bg: #070b16;
+  --bg-el: #0c1322;
+  --surface: #111a2b;
+  --surface-2: #18253a;
+  --surface-3: #243550;
 
-  --label: #f7fbff;
-  --label-2: rgba(226, 239, 251, .72);
-  --label-3: rgba(198, 220, 239, .46);
-  --label-4: rgba(198, 220, 239, .24);
+  --label: #f6f7ff;
+  --label-2: rgba(223, 230, 250, .72);
+  --label-3: rgba(191, 204, 238, .48);
+  --label-4: rgba(191, 204, 238, .24);
 
-  --sep: rgba(105, 141, 171, .28);
-  --sep-op: rgba(105, 141, 171, .20);
+  --sep: rgba(121, 145, 209, .27);
+  --sep-op: rgba(121, 145, 209, .19);
 
   --r: 14px;
   --r-lg: 20px;
@@ -1307,26 +1307,30 @@ body.chips-dragging *{cursor:inherit}
 }
 
 :root[data-theme='light'] {
-  --bg: #eef3f8;
-  --bg-el: #f7faff;
+  --bg: #f1f3fc;
+  --bg-el: #f8f9ff;
   --surface: #ffffff;
-  --surface-2: #ebf1f8;
-  --surface-3: #dbe6f2;
+  --surface-2: #edf0fc;
+  --surface-3: #dfe4f8;
 
-  --label: #102030;
-  --label-2: rgba(22, 44, 67, .72);
-  --label-3: rgba(22, 44, 67, .48);
-  --label-4: rgba(22, 44, 67, .22);
+  --label: #10152c;
+  --label-2: rgba(25, 34, 68, .72);
+  --label-3: rgba(35, 47, 91, .48);
+  --label-4: rgba(35, 47, 91, .22);
 
-  --sep: rgba(88, 121, 154, .22);
-  --sep-op: rgba(88, 121, 154, .16);
+  --sep: rgba(88, 102, 168, .22);
+  --sep-op: rgba(88, 102, 168, .16);
 }
+
+/* neXtuin's electric-blue and violet signature, with a contrast-safe light variant. */
+:root[data-accent="nextuin"] { --acc: #7e8dff; --acc-2: #6c62e8; --on-acc: #090d20 }
+:root[data-theme="light"][data-accent="nextuin"] { --acc: #5365df; --acc-2: #474ac5; --on-acc: #fff }
 
 body {
   font-family: var(--font-body);
   background:
-    radial-gradient(130% 70% at 110% -8%, color-mix(in srgb, var(--acc) 22%, transparent), transparent 66%),
-    radial-gradient(90% 56% at -8% -14%, color-mix(in srgb, var(--teal) 18%, transparent), transparent 70%),
+    radial-gradient(115% 65% at 112% -8%, rgba(115, 126, 255, .19), transparent 66%),
+    radial-gradient(86% 58% at -8% -14%, rgba(76, 177, 255, .14), transparent 70%),
     var(--bg);
 }
 
@@ -1336,8 +1340,8 @@ body::before {
   inset: 0;
   pointer-events: none;
   background-image:
-    linear-gradient(120deg, rgba(255, 255, 255, .03) 0%, transparent 34%),
-    radial-gradient(circle at 20% 20%, rgba(255, 255, 255, .025) 0, transparent 46%);
+    linear-gradient(120deg, rgba(255, 255, 255, .025) 0%, transparent 34%),
+    radial-gradient(circle at 20% 20%, rgba(129, 150, 255, .035) 0, transparent 46%);
   mix-blend-mode: soft-light;
   z-index: -1;
 }
@@ -1359,8 +1363,8 @@ body::before {
 .today-row,
 .sheet,
 .center {
-  border: 1px solid color-mix(in srgb, var(--sep) 75%, transparent);
-  box-shadow: 0 12px 38px -24px rgba(2, 10, 18, .9);
+  border: 1px solid color-mix(in srgb, var(--sep) 82%, transparent);
+  box-shadow: 0 14px 38px -24px rgba(2, 5, 20, .86);
 }
 
 .card,
@@ -1370,8 +1374,149 @@ body::before {
 .wl-unit,
 .ss-card,
 .today-row {
-  background: linear-gradient(170deg, color-mix(in srgb, var(--surface) 92%, transparent), color-mix(in srgb, var(--surface-2) 75%, transparent));
+  background: linear-gradient(155deg, color-mix(in srgb, var(--surface) 96%, #8295ff 4%), color-mix(in srgb, var(--surface-2) 78%, transparent));
 }
+
+:root[data-theme="light"] .card,
+:root[data-theme="light"] .sect-b,
+:root[data-theme="light"] .tile,
+:root[data-theme="light"] .item,
+:root[data-theme="light"] .wl-unit,
+:root[data-theme="light"] .ss-card,
+:root[data-theme="light"] .today-row {
+  background: linear-gradient(145deg, #fff, color-mix(in srgb, var(--surface-2) 74%, #dce5ff));
+}
+
+.brandline {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-bottom: 9px;
+  color: var(--label-2);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: .15em;
+  line-height: 1;
+  text-transform: uppercase;
+}
+
+.brandline i {
+  color: var(--label-3);
+  font-size: 9px;
+  font-style: normal;
+  font-weight: 500;
+  letter-spacing: .12em;
+}
+
+.brand-mark {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  place-items: center;
+  border: 1px solid rgba(132, 157, 255, .5);
+  border-radius: 8px;
+  background: linear-gradient(140deg, #54c8ff, #8775ff 72%);
+  box-shadow: 0 0 18px rgba(105, 127, 255, .35);
+  color: #081124;
+  font-family: var(--font-display);
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: -.08em;
+  animation: nextuin-mark 5s ease-in-out infinite;
+}
+
+@keyframes nextuin-mark {
+  0%, 100% { box-shadow: 0 0 12px rgba(105, 127, 255, .25); }
+  50% { box-shadow: 0 0 21px rgba(105, 127, 255, .48); }
+}
+
+.hdr h1 {
+  background: linear-gradient(100deg, var(--label) 42%, color-mix(in srgb, var(--acc) 70%, var(--label)));
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+:root[data-theme="light"] .hdr h1 {
+  background-image: linear-gradient(100deg, var(--label) 48%, #5966cf);
+}
+
+.card,
+.sect-b,
+.tile,
+.item,
+.wl-unit,
+.ss-card,
+.today-row {
+  transition: border-color var(--med), box-shadow var(--med);
+}
+
+.btn.primary {
+  background: linear-gradient(115deg, var(--acc), color-mix(in srgb, var(--acc-2) 76%, var(--acc)));
+  box-shadow: 0 10px 28px -15px color-mix(in srgb, var(--acc) 78%, transparent);
+}
+
+.btn.primary:active {
+  background: linear-gradient(115deg, color-mix(in srgb, var(--acc) 82%, var(--acc-2)), var(--acc-2));
+  box-shadow: 0 4px 16px -10px color-mix(in srgb, var(--acc) 72%, transparent);
+}
+
+.chip.on {
+  background: color-mix(in srgb, var(--acc) 15%, var(--surface));
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--acc) 14%, transparent);
+}
+
+#tabbar {
+  border-color: color-mix(in srgb, #8292ff 27%, var(--sep-op));
+  background: color-mix(in srgb, var(--bg-el) 94%, transparent);
+  box-shadow: 0 18px 42px -24px rgba(42, 51, 127, .82), 0 0 22px -17px rgba(95, 145, 255, .8);
+}
+
+#tabbar button.start .cir {
+  background: linear-gradient(140deg, var(--acc), var(--acc-2));
+  box-shadow: 0 8px 22px -10px color-mix(in srgb, var(--acc) 78%, transparent);
+  color: var(--on-acc);
+  transition: transform var(--fast) var(--ease), box-shadow var(--med);
+}
+
+#tabbar button.start:active .cir {
+  transform: scale(.94);
+  box-shadow: 0 4px 14px -9px color-mix(in srgb, var(--acc) 70%, transparent);
+}
+
+@keyframes nextuin-enter {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+.vfade .narrow > .card {
+  animation: nextuin-enter 360ms var(--ease) both;
+}
+
+.app-download-list{display:grid;gap:8px;padding:10px}
+.app-download-card{
+  display:flex;align-items:center;gap:11px;width:100%;min-width:0;padding:12px;
+  border:1px solid color-mix(in srgb,var(--sep) 82%,transparent);border-radius:var(--r);
+  background:linear-gradient(145deg,color-mix(in srgb,var(--surface) 96%,var(--acc) 4%),var(--surface-2));
+  color:var(--label);text-align:left;text-decoration:none;
+  transition:transform var(--fast) var(--ease),border-color var(--med),background var(--med);
+}
+.app-download-card[href]:active{transform:scale(.985);border-color:var(--acc-line)}
+.app-download-card.disabled{cursor:default;opacity:.66}
+.app-download-icon{
+  display:grid;place-items:center;width:42px;height:42px;flex:none;
+  border:1px solid color-mix(in srgb,var(--acc) 24%,transparent);border-radius:13px;
+  background:var(--acc-soft);color:var(--acc);
+}
+.app-platform-mark{width:23px;height:23px;display:block}
+.app-download-copy{display:flex;flex:1;min-width:0;flex-direction:column;gap:3px}
+.app-download-title{font-size:15px;line-height:1.2;font-weight:600}
+.app-download-sub{font-size:12px;line-height:1.3;color:var(--label-2)}
+.app-download-action{
+  display:inline-flex;align-items:center;justify-content:flex-end;gap:5px;flex:none;
+  color:var(--acc);font-size:13px;font-weight:600;white-space:nowrap;
+}
+.app-download-action .icn{font-size:15px}
+.app-download-card.disabled .app-download-action{color:var(--label-3);font-weight:500}
 
 .btn {
   border-radius: 16px;

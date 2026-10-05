@@ -4,7 +4,7 @@ android {
     namespace "ch.duartesantos.opengym"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "ch.duartesantos.opengym"
+        applicationId "es.nextuin.gym"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 21
@@ -24,7 +24,7 @@ android {
         debug {
             // Test build installs side-by-side with the real app: its own applicationId, so both
             // can live on one device. The name/icon label is overridden by the debug resource
-            // overlay in src/debug/res. The release build (the "real" app) is untouched.
+            // overlay in src/debug/res. The release build keeps the public Nextuin identity.
             applicationIdSuffix ".test"
         }
     }

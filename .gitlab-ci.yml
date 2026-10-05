@@ -498,14 +498,14 @@ build:web-check:
 
 # ------------------------------------------------------------------------------ apk
 
-# The official signed APK. Signing keys live in protected CI variables, so they only
+# The official signed Nextuin Gym APK. Signing keys live in protected CI variables, so they only
 # exist on protected refs (main and v* tags) — a fork's MR builds an unsigned APK and
 # cannot get at the key. Sideload-only by design: openGym is on no app store.
 #
 # Needs three CI/CD variables (Settings → CI/CD → Variables), all *protected*:
-#   ANDROID_KEYSTORE_B64       file    base64 of opengym-release.keystore
+#   ANDROID_KEYSTORE_B64       file    base64 of nextuin-release.jks
 #   ANDROID_KEYSTORE_PASSWORD  masked  the keystore password
-#   ANDROID_KEY_ALIAS          plain   opengym
+#   ANDROID_KEY_ALIAS          plain   nextuin
 # KEEP THAT KEYSTORE: updates must be signed with the same key or Android refuses to
 # install them over an existing copy.
 build:apk:
@@ -545,9 +545,9 @@ build:apk:
           --ks-pass "env:ANDROID_KEYSTORE_PASSWORD" \
           --ks-key-alias "$ANDROID_KEY_ALIAS" \
           --key-pass "env:ANDROID_KEYSTORE_PASSWORD" \
-          --out "$CI_PROJECT_DIR/openGym-$VER.apk" aligned.apk
+          --out "$CI_PROJECT_DIR/Nextuin-Gym-$VER.apk" aligned.apk
         rm -f "$CI_PROJECT_DIR/.ks.jks"
-        "$BT/apksigner" verify --print-certs "$CI_PROJECT_DIR/openGym-$VER.apk"
+        "$BT/apksigner" verify --print-certs "$CI_PROJECT_DIR/Nextuin-Gym-$VER.apk"
       elif [ -n "${CI_COMMIT_TAG:-}" ]; then
         # A release must never quietly ship an APK nobody can install. If the key is missing
         # on a tag, something is wrong with the protected variables — say so and stop.
@@ -556,7 +556,7 @@ build:apk:
         exit 1
       else
         echo "No signing key on this ref — producing an UNSIGNED apk (cannot be installed)."
-        "$BT/zipalign" -f -p 4 "$UNSIGNED" "$CI_PROJECT_DIR/openGym-$VER-unsigned.apk"
+        "$BT/zipalign" -f -p 4 "$UNSIGNED" "$CI_PROJECT_DIR/Nextuin-Gym-$VER-unsigned.apk"
       fi
       echo "APK_VERSION=$VER" >> "$CI_PROJECT_DIR/apk.env"
     # On a release tag the APK also goes into the generic package registry, which is
@@ -568,10 +568,10 @@ build:apk:
       # Sideloading means nobody's app store checked this file for you, so publish the
       # digest next to it rather than leaving people to trust the download. Written for
       # every build (branch artifacts too), uploaded only from a release tag.
-      for apk in openGym-*.apk; do sha256sum "$apk" > "$apk.sha256"; cat "$apk.sha256"; done
-      if [ -n "${CI_COMMIT_TAG:-}" ] && [ -f "openGym-$APK_VERSION.apk" ]; then
-        echo "APK_SHA256=$(cut -d' ' -f1 "openGym-$APK_VERSION.apk.sha256")" >> apk.env
-        for f in "openGym-$APK_VERSION.apk" "openGym-$APK_VERSION.apk.sha256"; do
+      for apk in Nextuin-Gym-*.apk; do sha256sum "$apk" > "$apk.sha256"; cat "$apk.sha256"; done
+      if [ -n "${CI_COMMIT_TAG:-}" ] && [ -f "Nextuin-Gym-$APK_VERSION.apk" ]; then
+        echo "APK_SHA256=$(cut -d' ' -f1 "Nextuin-Gym-$APK_VERSION.apk.sha256")" >> apk.env
+        for f in "Nextuin-Gym-$APK_VERSION.apk" "Nextuin-Gym-$APK_VERSION.apk.sha256"; do
           curl --fail --silent --show-error \
             --header "JOB-TOKEN: $CI_JOB_TOKEN" \
             --upload-file "$f" \
@@ -580,10 +580,10 @@ build:apk:
         done
       fi
   artifacts:
-    name: "openGym-apk-$CI_COMMIT_REF_SLUG"
+    name: "Nextuin-Gym-apk-$CI_COMMIT_REF_SLUG"
     paths:
-      - "openGym-*.apk"
-      - "openGym-*.apk.sha256"
+      - "Nextuin-Gym-*.apk"
+      - "Nextuin-Gym-*.apk.sha256"
     reports:
       dotenv: apk.env
     expire_in: 30 days
@@ -870,20 +870,20 @@ release:
       | \`$CI_REGISTRY_IMAGE/api\` | \`$SEMVER\` \`$MINOR\` \`latest\` | \`$IMAGE_DIGEST_API\` |
       | \`$CI_REGISTRY_IMAGE/web\` | \`$SEMVER\` \`$MINOR\` \`latest\` | \`$IMAGE_DIGEST_WEB\` |
 
-      Both images are linux/amd64 + linux/arm64. Android: \`openGym-$APK_VERSION.apk\`, SHA-256 \`$APK_SHA256\` — check it with \`sha256sum -c openGym-$APK_VERSION.apk.sha256\`. Built from $CI_COMMIT_SHA.
+      Both images are linux/amd64 + linux/arm64. Android: \`Nextuin-Gym-$APK_VERSION.apk\`, SHA-256 \`$APK_SHA256\` — check it with \`sha256sum -c Nextuin-Gym-$APK_VERSION.apk.sha256\`. Built from $CI_COMMIT_SHA.
       EOF
       cat release-notes.md
   release:
     tag_name: $CI_COMMIT_TAG
-    name: "openGym $CI_COMMIT_TAG"
+    name: "Nextuin Gym $CI_COMMIT_TAG"
     description: release-notes.md
     assets:
       links:
-        - name: "openGym-$APK_VERSION.apk (Android, sideload)"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/opengym-android/$APK_VERSION/openGym-$APK_VERSION.apk"
+        - name: "Nextuin-Gym-$APK_VERSION.apk (Android, sideload)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/opengym-android/$APK_VERSION/Nextuin-Gym-$APK_VERSION.apk"
           link_type: package
-        - name: "openGym-$APK_VERSION.apk.sha256 (checksum)"
-          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/opengym-android/$APK_VERSION/openGym-$APK_VERSION.apk.sha256"
+        - name: "Nextuin-Gym-$APK_VERSION.apk.sha256 (checksum)"
+          url: "$CI_API_V4_URL/projects/$CI_PROJECT_ID/packages/generic/opengym-android/$APK_VERSION/Nextuin-Gym-$APK_VERSION.apk.sha256"
           link_type: other
         - name: "Container images (api + web)"
           url: "$CI_PROJECT_URL/container_registry"
