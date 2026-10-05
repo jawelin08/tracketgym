@@ -7,6 +7,15 @@ import './index.css'
 // App.jsx restores per-route scroll itself; the browser's own attempt races it.
 if ('scrollRestoration' in history) history.scrollRestoration = 'manual'
 
+const spotifyCallback = new URLSearchParams(location.search)
+if (
+  location.pathname === '/settings' &&
+  (spotifyCallback.has('code') || spotifyCallback.has('error')) &&
+  location.hash !== '#/settings'
+) {
+  history.replaceState(history.state, '', location.pathname + location.search + '#/settings')
+}
+
 createRoot(document.getElementById('root')).render(
   <StrictMode><App /></StrictMode>
 )
