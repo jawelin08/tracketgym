@@ -1227,7 +1227,8 @@ export default {
   'No exercises yet.': 'Még nincsenek gyakorlatok.',
   // --- sign-in adoption + offline banner (v1.3.6) ---
   'Add this device\'s workouts to your profile?': 'Hozzáadod az eszközön lévő edzéseket a profilodhoz?',
-  '{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': '{0} edzés és {1} mérés került rögzítésre ezen az eszközön bejelentkezés nélkül. Add hozzá őket a profilodhoz, vagy hagyd a profilt pontosan úgy, ahogy a szerveren van.',
+  "Add this device's data to your profile?": 'Hozzáadod az eszköz adatait a profilodhoz?',
+  'This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': '{0} edzés, {1} mérés, {2} rutin, {3} egyéni gyakorlat, {4} felszerelésprofil és {5} edzőtermi kártya készült ezen az eszközön bejelentkezés nélkül. Add hozzá őket a profilodhoz, vagy hagyd a profilt pontosan úgy, ahogy a szerveren van.',
   'Add them': 'Hozzáadás',
   'Keep profile as is': 'Profil marad',
   'Offline — your changes are saved on this device and sync when you are back online.': 'Offline — a módosításaid ezen az eszközön vannak mentve, és szinkronizálódnak, amint újra online leszel.',

@@ -1224,7 +1224,8 @@ export default {
   'No exercises yet.': 'अभी कोई व्यायाम नहीं।',
   // --- sign-in adoption + offline banner (v1.3.6) ---
   'Add this device\'s workouts to your profile?': 'इस डिवाइस के वर्कआउट अपनी प्रोफ़ाइल में जोड़ें?',
-  '{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': '{0} वर्कआउट और {1} वज़न इस डिवाइस पर बिना साइन इन किए दर्ज किए गए। इन्हें अपनी प्रोफ़ाइल में जोड़ें, या प्रोफ़ाइल को ठीक वैसा ही रखें जैसा सर्वर पर है।',
+  "Add this device's data to your profile?": 'इस डिवाइस का डेटा अपनी प्रोफ़ाइल में जोड़ें?',
+  'This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': 'बिना साइन इन किए इस डिवाइस पर {0} वर्कआउट, {1} वज़न रिकॉर्ड, {2} रूटीन, {3} कस्टम एक्सरसाइज़, {4} उपकरण प्रोफ़ाइल और {5} जिम कार्ड बनाए गए। इन्हें अपनी प्रोफ़ाइल में जोड़ें या प्रोफ़ाइल को सर्वर पर जैसा है वैसा ही रखें।',
   'Add them': 'जोड़ें',
   'Keep profile as is': 'प्रोफ़ाइल वैसी ही रखें',
   'Offline — your changes are saved on this device and sync when you are back online.': 'ऑफ़लाइन — आपके बदलाव इस डिवाइस पर सहेजे गए हैं और ऑनलाइन होते ही सिंक हो जाएँगे।',

@@ -90,16 +90,18 @@ export function mergeStates(a, b, { prefer } = {}) {
   return out
 }
 
-// What `local` holds that `server` does not: the workouts and weigh-ins a device logged while it
-// was signed out, and the custom exercises they use. Sign-in asks about these before the server's
-// profile replaces the local copy; zero of each means there is nothing to ask about.
+// User-created entries `local` holds that `server` does not. Sign-in asks before replacing the
+// local copy; zero of each means there is nothing to ask about.
 export function localExtras(local, server) {
   const have = new Set(list(server?.workouts).map(workoutKey))
   const days = new Set(list(server?.bodyweight).map(e => e?.d))
-  const ex = new Set(list(server?.customEx).map(e => e?.id))
+  const ids = field => new Set(list(server?.[field]).map(e => e?.id))
   return {
     workouts: list(local?.workouts).filter(w => !have.has(workoutKey(w))).length,
     bodyweight: list(local?.bodyweight).filter(e => e && e.d != null && !days.has(e.d)).length,
-    customEx: list(local?.customEx).filter(e => e && !ex.has(e.id)).length
+    routines: list(local?.routines).filter(e => e && !ids('routines').has(e.id)).length,
+    customEx: list(local?.customEx).filter(e => e && !ids('customEx').has(e.id)).length,
+    equipProfiles: list(local?.equipProfiles).filter(e => e && !ids('equipProfiles').has(e.id)).length,
+    gymCards: list(local?.gymCards).filter(e => e && !ids('gymCards').has(e.id)).length
   }
 }

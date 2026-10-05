@@ -1235,7 +1235,8 @@ export default {
   'No exercises yet.': 'ยังไม่มีท่าออกกำลังกาย',
   // --- sign-in adoption + offline banner (v1.3.6) ---
   'Add this device\'s workouts to your profile?': 'เพิ่มการฝึกจากอุปกรณ์นี้ลงในโปรไฟล์ของคุณหรือไม่',
-  '{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': 'มีการบันทึกการฝึก {0} ครั้งและการชั่งน้ำหนัก {1} ครั้งบนอุปกรณ์นี้ขณะไม่ได้ลงชื่อเข้าใช้ เพิ่มลงในโปรไฟล์ของคุณ หรือคงโปรไฟล์ไว้ตามที่อยู่บนเซิร์ฟเวอร์',
+  "Add this device's data to your profile?": 'เพิ่มข้อมูลจากอุปกรณ์นี้ลงในโปรไฟล์ของคุณหรือไม่?',
+  'This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': 'ขณะไม่ได้ลงชื่อเข้าใช้ อุปกรณ์นี้มีการสร้างการฝึก {0} ครั้ง การชั่งน้ำหนัก {1} ครั้ง รูทีน {2} รายการ ท่าออกกำลังกายกำหนดเอง {3} รายการ โปรไฟล์อุปกรณ์ {4} รายการ และบัตรยิม {5} ใบ เพิ่มลงในโปรไฟล์ของคุณ หรือคงโปรไฟล์ไว้ตามที่อยู่บนเซิร์ฟเวอร์',
   'Add them': 'เพิ่ม',
   'Keep profile as is': 'คงโปรไฟล์ไว้',
   'Offline — your changes are saved on this device and sync when you are back online.': 'ออฟไลน์ — การเปลี่ยนแปลงถูกบันทึกไว้ในอุปกรณ์นี้และจะซิงค์เมื่อกลับมาออนไลน์',

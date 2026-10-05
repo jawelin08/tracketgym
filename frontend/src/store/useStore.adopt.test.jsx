@@ -34,7 +34,9 @@ describe('adoptProfile — sign-in takes the server profile', () => {
     api.mockResolvedValueOnce({ state: clone(server), rev: 4 })
     const ask = vi.fn(async () => false)
     const r = await useStore.getState().adoptProfile(ask)
-    expect(ask).toHaveBeenCalledWith({ workouts: 1, bodyweight: 0, customEx: 0 })
+    expect(ask).toHaveBeenCalledWith({
+      workouts: 1, bodyweight: 0, routines: 1, customEx: 0, equipProfiles: 0, gymCards: 0
+    })
     const S = useStore.getState().S
     expect(S.unit).toBe('lb'); expect(S.restSec).toBe(60)
     expect(S.workouts.map(w => w.id)).toEqual(['w1'])
@@ -58,6 +60,21 @@ describe('adoptProfile — sign-in takes the server profile', () => {
     expect(puts()[0].baseRev).toBe(4)
     expect(puts()[0].state.workouts.map(w => w.id)).toEqual(['w1', 'w9'])
     expect(sync().rev).toBe(5)
+  })
+
+  it('asks before replacing routines created on this device while signed out', async () => {
+    signedIn({ ...clone(DEF), routines: [routine('local-only')] })
+    api.mockResolvedValueOnce({ state: clone(server), rev: 4 })
+    api.mockResolvedValueOnce({ ok: true, rev: 5 })
+    const ask = vi.fn(async () => true)
+
+    await useStore.getState().adoptProfile(ask)
+
+    expect(ask).toHaveBeenCalledWith({
+      workouts: 0, bodyweight: 0, routines: 1, customEx: 0, equipProfiles: 0, gymCards: 0
+    })
+    expect(useStore.getState().S.routines.map(x => x.id).sort()).toEqual(['local-only', 'r1'])
+    expect(puts()[0].state.routines.map(x => x.id).sort()).toEqual(['local-only', 'r1'])
   })
 
   it('does not ask when the device has nothing the profile lacks', async () => {

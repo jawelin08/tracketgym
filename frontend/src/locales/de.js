@@ -1244,7 +1244,8 @@ export default {
   'No exercises yet.': 'Noch keine Übungen.',
   // --- sign-in adoption + offline banner (v1.3.6) ---
   'Add this device\'s workouts to your profile?': 'Trainings von diesem Gerät zum Profil hinzufügen?',
-  '{0} workouts and {1} weigh-ins were logged on this device while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': '{0} Trainings und {1} Wiegungen wurden auf diesem Gerät ohne Anmeldung erfasst. Zum Profil hinzufügen oder das Profil genau so lassen, wie es auf dem Server ist.',
+  "Add this device's data to your profile?": 'Die Daten dieses Geräts zu deinem Profil hinzufügen?',
+  'This device has {0} workouts, {1} weigh-ins, {2} routines, {3} custom exercises, {4} equipment profiles and {5} gym cards created while signed out. Add them to your profile, or keep the profile exactly as it is on the server.': 'Auf diesem Gerät wurden ohne Anmeldung {0} Trainings, {1} Wiegungen, {2} Trainingspläne, {3} eigene Übungen, {4} Ausrüstungsprofile und {5} Mitgliedskarten erstellt. Zum Profil hinzufügen oder das Profil genau so lassen, wie es auf dem Server ist.',
   'Add them': 'Hinzufügen',
   'Keep profile as is': 'Profil so lassen',
   'Offline — your changes are saved on this device and sync when you are back online.': 'Offline — deine Änderungen sind auf diesem Gerät gespeichert und werden synchronisiert, sobald du wieder online bist.',

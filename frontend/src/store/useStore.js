@@ -492,7 +492,7 @@ export const useStore = create((set, get) => {
         return { adopted: false, added: false }
       }
       const extras = localExtras(S, state)
-      const keep = (extras.workouts || extras.bodyweight || extras.customEx) && typeof ask === 'function' ? await ask(extras) : false
+      const keep = Object.values(extras).some(Boolean) && typeof ask === 'function' ? await ask(extras) : false
       const serverCopy = Object.assign(clone(DEF), state, { active: S.active || null })
       if (keep) {
         const merged = Object.assign(clone(DEF), mergeStates(state, S, { prefer: 'a' }))
